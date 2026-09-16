@@ -1,26 +1,17 @@
-// vRemote dual-microphone audio pipe.
+// vRemote audio pipe.
 //
-// MacBook microphone -> AVCaptureSession ----┐
-//                                             ├-> aligned equal mix -> vRemoteDr 2ch
-// X6 ATVV ADPCM -> decoded Int16 PCM --------┘
+// X6 / Chromecast ATVV ADPCM -> decoded Int16 PCM -> vRemoteDr 2ch
 //
-// Both microphones are peers. Neither source permanently wins or ducks the
-// other. The Mac path is delayed slightly to compensate for BLE transport
-// latency, then the two available signals are averaged and hard-limited.
+// 本版本只保留遥控器麦克风通路：MacBook 内置麦克风已移除，
+// 因此不再有采集会话、双麦混音与延迟对齐。
 
 import AVFoundation
 import AudioToolbox
 import CoreAudio
-import CoreMedia
 import Foundation
 
-final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
+final class AudioPipe: NSObject {
     static let shared = AudioPipe()
-
-    private enum InputSource {
-        case mac
-        case remote
-    }
 
     private static let targetDeviceName = "vRemoteDr 2ch"
     private static let outputSampleRate: Double = 48_000
@@ -31,34 +22,15 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     // it is input calibration, not source priority.
     private static let remoteGain: Float = 10.0
 
-    // The Mac capture path usually arrives before BLE voice frames. Keeping a
-    // small Mac backlog makes the same spoken syllable from both microphones
-    // meet in the same render window. This first experimental value is shown
-    // in logs and can be tuned from real recordings later.
-    private static let macAlignmentDelaySeconds = 0.12
-    private static let macAlignmentDelayFrames = Int(
-        outputSampleRate * macAlignmentDelaySeconds
-    )
-
-    private let captureSession = AVCaptureSession()
-    private let captureQueue = DispatchQueue(
-        label: "local.simaqingfeng.vRemote.capture",
-        qos: .userInteractive
-    )
-
     private let stateLock = NSLock()
     private var mixActive = false
-    private var macInputEnabled = AppStorage.macInputEnabled
     private var remoteInputEnabled = AppStorage.remoteInputEnabled
     private var outputDeviceID: AudioDeviceID?
     private var outputIOProcID: AudioDeviceIOProcID?
 
-    private var pendingMac: [Float] = []
-    private var pendingMacIndex = 0
     private var pendingRemote: [Float] = []
     private var pendingRemoteIndex = 0
 
-    private var scheduledMacBuffers = 0
     private var scheduledRemoteBuffers = 0
     private var scheduledPeak: Float = 0
     private var renderCallbackCount = 0
@@ -67,10 +39,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     private var loggedFirstRemoteRender = false
     private var diagnosticsTimer: Timer?
 
-    var onMacLevel: ((Double) -> Void)?
     var onRouteChanged: ((Bool) -> Void)?
-    private var macLevelAt = Date.distantPast
-    private var captureConfigured = false
 
     private override init() {
         super.init()
@@ -87,11 +56,6 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         if ProcessInfo.processInfo.environment["MIA_DIAGNOSTICS"] == "1" {
             startDiagnosticsTimer()
         }
-        if macInputEnabled {
-            requestBuiltInMicAccess()
-        } else {
-            print("[AUDIO] MacBook 麦克风未勾选，不启动采集")
-        }
     }
 
     // MARK: - Public input API
@@ -106,14 +70,12 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         }
         schedule(
             monoSamples: floatSamples,
-            sampleRate: inputSampleRate,
-            source: .remote
+            sampleRate: inputSampleRate
         )
     }
 
     /// Kept under the V1 method name so the proven X6 session state machine
-    /// remains unchanged. In vRemote, `active` means that the dual-input mix
-    /// is open; it no longer selects one microphone over another.
+    /// remains unchanged. `active` means the remote audio route is open.
     func setRemoteActive(_ active: Bool) {
         stateLock.lock()
         let changed = mixActive != active
@@ -129,55 +91,36 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         guard changed else { return }
         print(
             active
-                ? "[AUDIO] 双麦克风混音开启 · X6 + MacBook · Mac 对齐延迟 120ms"
-                : "[AUDIO] 双麦克风混音关闭"
+                ? "[AUDIO] 遥控器麦克风通路开启"
+                : "[AUDIO] 遥控器麦克风通路关闭"
         )
         onRouteChanged?(active)
     }
 
-    func setInputEnabled(mac: Bool, remote: Bool) {
+    func setInputEnabled(remote: Bool) {
         stateLock.lock()
-        let macChanged = macInputEnabled != mac
         let remoteChanged = remoteInputEnabled != remote
-        macInputEnabled = mac
         remoteInputEnabled = remote
-        if !mac {
-            pendingMac.removeAll(keepingCapacity: true)
-            pendingMacIndex = 0
-        }
         if !remote {
             pendingRemote.removeAll(keepingCapacity: true)
             pendingRemoteIndex = 0
         }
         stateLock.unlock()
 
-        AppStorage.macInputEnabled = mac
         AppStorage.remoteInputEnabled = remote
 
-        if macChanged {
-            setMacCaptureEnabled(mac)
-            if !mac { onMacLevel?(-120) }
-        }
-        if macChanged || remoteChanged {
-            print(
-                "[AUDIO] 输入选择更新 · MacBook=\(mac ? "ON" : "OFF") " +
-                "X6=\(remote ? "ON" : "OFF")"
-            )
+        if remoteChanged {
+            print("[AUDIO] 遥控器输入更新 · \(remote ? "ON" : "OFF")")
             onRouteChanged?(mixActive)
         }
     }
 
-    var isMacInputEnabled: Bool { inputState.macEnabled }
     var isRemoteInputEnabled: Bool { inputState.remoteEnabled }
     var isOutputDeviceAvailable: Bool { outputDeviceID != nil }
 
     func stop() {
         diagnosticsTimer?.invalidate()
         diagnosticsTimer = nil
-
-        if captureSession.isRunning {
-            captureSession.stopRunning()
-        }
 
         if let deviceID = outputDeviceID, let ioProcID = outputIOProcID {
             let stopStatus = AudioDeviceStop(deviceID, ioProcID)
@@ -191,157 +134,6 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         outputDeviceID = nil
     }
 
-    // MARK: - Built-in microphone capture
-
-    private func requestBuiltInMicAccess() {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
-            startBuiltInMicCapture()
-        case .notDetermined:
-            print("[AUDIO] 请求 MacBook 麦克风权限…")
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                DispatchQueue.main.async {
-                    if granted {
-                        self?.startBuiltInMicCapture()
-                    } else {
-                        print("[AUDIO] ⚠️ MacBook 麦克风权限被拒绝")
-                    }
-                }
-            }
-        default:
-            print("[AUDIO] ⚠️ 没有 MacBook 麦克风权限；当前只能收到 X6 音频")
-        }
-    }
-
-    private func startBuiltInMicCapture() {
-        if captureConfigured {
-            captureQueue.async { [weak self] in
-                guard let self, !self.captureSession.isRunning else { return }
-                self.captureSession.startRunning()
-                print("[AUDIO] MacBook 麦克风采集已恢复")
-            }
-            return
-        }
-        let discovery = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.builtInMicrophone],
-            mediaType: .audio,
-            position: .unspecified
-        )
-        // Intel Mac 上内置麦克风的 uniqueID 是 AppleHDAEngineInput:…，名字
-        // 也不含 "MacBook"（例如 "Built-in Microphone"），所以在这些机型上
-        // 前两个条件都匹配不到。discovery 已按 builtInMicrophone 过滤，因此
-        // 兜底取第一个即等价于“内置麦克风”。
-        let device = discovery.devices.first {
-            $0.uniqueID == "BuiltInMicrophoneDevice"
-        } ?? discovery.devices.first {
-            $0.localizedName.localizedCaseInsensitiveContains("MacBook")
-        } ?? discovery.devices.first {
-            $0.uniqueID.hasPrefix("AppleHDAEngineInput")
-        } ?? discovery.devices.first
-        guard let device else {
-            print("[AUDIO] ⚠️ 找不到 MacBook 内置麦克风")
-            return
-        }
-
-        do {
-            let input = try AVCaptureDeviceInput(device: device)
-            let output = AVCaptureAudioDataOutput()
-            output.audioSettings = [
-                AVFormatIDKey: kAudioFormatLinearPCM,
-                AVLinearPCMBitDepthKey: 32,
-                AVLinearPCMIsFloatKey: true,
-                AVLinearPCMIsNonInterleaved: false,
-                AVNumberOfChannelsKey: 1,
-            ]
-            output.setSampleBufferDelegate(self, queue: captureQueue)
-
-            captureSession.beginConfiguration()
-            guard captureSession.canAddInput(input),
-                  captureSession.canAddOutput(output)
-            else {
-                captureSession.commitConfiguration()
-                print("[AUDIO] ⚠️ 无法建立 MacBook 麦克风采集会话")
-                return
-            }
-            captureSession.addInput(input)
-            captureSession.addOutput(output)
-            captureSession.commitConfiguration()
-            captureConfigured = true
-
-            captureQueue.async { [weak self] in
-                guard let self else { return }
-                self.captureSession.startRunning()
-                print(
-                    "[AUDIO] MacBook 麦克风采集已启动: " +
-                    "\(device.localizedName), running=\(self.captureSession.isRunning)"
-                )
-            }
-        } catch {
-            print("[AUDIO] ⚠️ MacBook 麦克风采集失败: \(error.localizedDescription)")
-        }
-    }
-
-    func captureOutput(
-        _ output: AVCaptureOutput,
-        didOutput sampleBuffer: CMSampleBuffer,
-        from connection: AVCaptureConnection
-    ) {
-        guard isMacInputEnabled,
-              let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
-              let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(
-                formatDescription
-              ),
-              streamDescription.pointee.mFormatID == kAudioFormatLinearPCM,
-              streamDescription.pointee.mBitsPerChannel == 32,
-              streamDescription.pointee.mFormatFlags & kAudioFormatFlagIsFloat != 0,
-              let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer)
-        else { return }
-
-        let byteCount = CMBlockBufferGetDataLength(blockBuffer)
-        guard byteCount >= MemoryLayout<Float>.size else { return }
-        var data = Data(count: byteCount)
-        let copyStatus = data.withUnsafeMutableBytes { bytes in
-            CMBlockBufferCopyDataBytes(
-                blockBuffer,
-                atOffset: 0,
-                dataLength: byteCount,
-                destination: bytes.baseAddress!
-            )
-        }
-        guard copyStatus == kCMBlockBufferNoErr else { return }
-
-        let channels = max(1, Int(streamDescription.pointee.mChannelsPerFrame))
-        let floats: [Float] = data.withUnsafeBytes { rawBuffer in
-            let values = rawBuffer.bindMemory(to: Float.self)
-            if channels == 1 {
-                return Array(values)
-            }
-            let frameCount = values.count / channels
-            return (0..<frameCount).map { frame in
-                var sum: Float = 0
-                for channel in 0..<channels {
-                    sum += values[frame * channels + channel]
-                }
-                return sum / Float(channels)
-            }
-        }
-
-        if Date().timeIntervalSince(macLevelAt) >= 0.1 {
-            let sumSquares = floats.reduce(0.0) { $0 + Double($1 * $1) }
-            let rms = floats.isEmpty ? 0 : sqrt(sumSquares / Double(floats.count))
-            let db = rms > 0 ? 20.0 * log10(rms) : -120
-            onMacLevel?(db)
-            macLevelAt = Date()
-        }
-
-        guard isMixActive else { return }
-        schedule(
-            monoSamples: floats,
-            sampleRate: streamDescription.pointee.mSampleRate,
-            source: .mac
-        )
-    }
-
     // MARK: - Queues and resampling
 
     private var isMixActive: Bool {
@@ -350,28 +142,15 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         return mixActive
     }
 
-    private var inputState: (mixActive: Bool, macEnabled: Bool, remoteEnabled: Bool) {
+    private var inputState: (mixActive: Bool, remoteEnabled: Bool) {
         stateLock.lock()
         defer { stateLock.unlock() }
-        return (mixActive, macInputEnabled, remoteInputEnabled)
-    }
-
-    private func setMacCaptureEnabled(_ enabled: Bool) {
-        if enabled {
-            requestBuiltInMicAccess()
-            return
-        }
-        captureQueue.async { [weak self] in
-            guard let self, self.captureSession.isRunning else { return }
-            self.captureSession.stopRunning()
-            print("[AUDIO] MacBook 麦克风采集已暂停")
-        }
+        return (mixActive, remoteInputEnabled)
     }
 
     private func schedule(
         monoSamples: [Float],
-        sampleRate: Double,
-        source: InputSource
+        sampleRate: Double
     ) {
         guard !monoSamples.isEmpty, sampleRate > 0 else { return }
         let resampled = Self.resample(
@@ -382,32 +161,23 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         guard !resampled.isEmpty else { return }
 
         stateLock.lock()
-        let sourceEnabled = source == .mac ? macInputEnabled : remoteInputEnabled
-        guard mixActive, sourceEnabled else {
+        guard mixActive, remoteInputEnabled else {
             stateLock.unlock()
             return
         }
 
         var firstRemoteBufferDescription: String?
-        switch source {
-        case .mac:
-            compactMacBufferIfNeededLocked()
-            pendingMac.append(contentsOf: resampled)
-            scheduledMacBuffers += 1
-
-        case .remote:
-            compactRemoteBufferIfNeededLocked()
-            pendingRemote.append(contentsOf: resampled)
-            scheduledRemoteBuffers += 1
-            remoteSessionScheduledBuffers += 1
-            if remoteSessionScheduledBuffers == 1 {
-                let peak = resampled.reduce(0) { max($0, abs($1)) }
-                firstRemoteBufferDescription = String(
-                    format: "[AUDIO] X6 首缓冲 frames=%d peak=%.4f",
-                    resampled.count,
-                    peak
-                )
-            }
+        compactRemoteBufferIfNeededLocked()
+        pendingRemote.append(contentsOf: resampled)
+        scheduledRemoteBuffers += 1
+        remoteSessionScheduledBuffers += 1
+        if remoteSessionScheduledBuffers == 1 {
+            let peak = resampled.reduce(0) { max($0, abs($1)) }
+            firstRemoteBufferDescription = String(
+                format: "[AUDIO] X6 首缓冲 frames=%d peak=%.4f",
+                resampled.count,
+                peak
+            )
         }
         scheduledPeak = max(
             scheduledPeak,
@@ -478,10 +248,8 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
             firstChannels
         guard frameCount > 0 else { return }
 
-        var mac = [Float](repeating: 0, count: frameCount)
         var remote = [Float](repeating: 0, count: frameCount)
         var mixed = [Float](repeating: 0, count: frameCount)
-        var macTaken = 0
         var remoteTaken = 0
         var firstRemoteRenderDescription: String?
 
@@ -509,19 +277,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
                 }
             }
 
-            let macAvailable = pendingMac.count - pendingMacIndex
-            let macReady = max(0, macAvailable - Self.macAlignmentDelayFrames)
-            if macReady > 0 {
-                macTaken = min(frameCount, macReady)
-                mac.replaceSubrange(
-                    0..<macTaken,
-                    with: pendingMac[pendingMacIndex..<(pendingMacIndex + macTaken)]
-                )
-                pendingMacIndex += macTaken
-            }
-
             compactRemoteBufferIfNeededLocked()
-            compactMacBufferIfNeededLocked()
         }
         renderCallbackCount += 1
         stateLock.unlock()
@@ -531,20 +287,8 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         }
 
         for frame in 0..<frameCount {
-            let hasMac = frame < macTaken
             let hasRemote = frame < remoteTaken
-            let value: Float
-            if hasMac && hasRemote {
-                // Equal, source-agnostic mix. Averaging preserves headroom and
-                // prevents the +6 dB overload caused by raw summation.
-                value = (mac[frame] + remote[frame]) * 0.5
-            } else if hasMac {
-                value = mac[frame]
-            } else if hasRemote {
-                value = remote[frame]
-            } else {
-                value = 0
-            }
+            let value: Float = hasRemote ? remote[frame] : 0
             mixed[frame] = max(-1.0, min(1.0, value))
         }
 
@@ -567,22 +311,8 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     }
 
     private func clearPendingBuffersLocked() {
-        pendingMac.removeAll(keepingCapacity: true)
-        pendingMacIndex = 0
         pendingRemote.removeAll(keepingCapacity: true)
         pendingRemoteIndex = 0
-    }
-
-    private func compactMacBufferIfNeededLocked() {
-        if pendingMacIndex > 4_096 {
-            pendingMac.removeFirst(pendingMacIndex)
-            pendingMacIndex = 0
-        }
-        trimBufferIfNeededLocked(
-            bufferCount: pendingMac.count,
-            index: &pendingMacIndex,
-            extraFrames: Self.macAlignmentDelayFrames
-        )
     }
 
     private func compactRemoteBufferIfNeededLocked() {
@@ -592,17 +322,15 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         }
         trimBufferIfNeededLocked(
             bufferCount: pendingRemote.count,
-            index: &pendingRemoteIndex,
-            extraFrames: 0
+            index: &pendingRemoteIndex
         )
     }
 
     private func trimBufferIfNeededLocked(
         bufferCount: Int,
-        index: inout Int,
-        extraFrames: Int
+        index: inout Int
     ) {
-        let maximumQueuedFrames = Int(Self.outputSampleRate * 2) + extraFrames
+        let maximumQueuedFrames = Int(Self.outputSampleRate * 2)
         let available = bufferCount - index
         if available > maximumQueuedFrames {
             index += available - maximumQueuedFrames
@@ -655,25 +383,20 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
             guard let self else { return }
             self.stateLock.lock()
             let active = self.mixActive
-            let macBuffers = self.scheduledMacBuffers
             let remoteBuffers = self.scheduledRemoteBuffers
             let peak = self.scheduledPeak
             let renders = self.renderCallbackCount
-            let macQueued = self.pendingMac.count - self.pendingMacIndex
             let remoteQueued = self.pendingRemote.count - self.pendingRemoteIndex
-            self.scheduledMacBuffers = 0
             self.scheduledRemoteBuffers = 0
             self.scheduledPeak = 0
             self.renderCallbackCount = 0
             self.stateLock.unlock()
             print(String(
                 format:
-                    "[AUDIO-METER] mix=%@ macBuffers=%d remoteBuffers=%d " +
-                    "macQueued=%d remoteQueued=%d peak=%.4f renders=%d",
+                    "[AUDIO-METER] route=%@ remoteBuffers=%d " +
+                    "remoteQueued=%d peak=%.4f renders=%d",
                 active ? "on" : "off",
-                macBuffers,
                 remoteBuffers,
-                macQueued,
                 remoteQueued,
                 peak,
                 renders

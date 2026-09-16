@@ -2,7 +2,6 @@
 
 The app bundles these screenshots for its two-step permission guides:
 
-- `permission-microphone.png`: Privacy & Security > Microphone
 - `permission-accessibility.png`: Privacy & Security > Accessibility
 - `permission-input-monitoring.png`: Privacy & Security > Input Monitoring
 - `permission-bluetooth.png`: Privacy & Security > Bluetooth

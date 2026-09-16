@@ -1,13 +1,11 @@
 import AppKit
 import ApplicationServices
-import AVFoundation
 import CoreBluetooth
 import CoreGraphics
 import SwiftUI
 
 enum PermissionKind: String, Identifiable, CaseIterable {
     case doubaoInput
-    case microphone
     case accessibility
     case inputMonitoring
     case bluetooth
@@ -17,7 +15,6 @@ enum PermissionKind: String, Identifiable, CaseIterable {
     var title: String {
         switch self {
         case .doubaoInput: L10n.text("豆包麦克风设置", "Doubao Microphone Setup")
-        case .microphone: L10n.text("麦克风权限", "Microphone Permission")
         case .accessibility: L10n.text("辅助功能权限", "Accessibility Permission")
         case .inputMonitoring: L10n.text("输入监控权限", "Input Monitoring Permission")
         case .bluetooth: L10n.text("蓝牙权限", "Bluetooth Permission")
@@ -28,7 +25,6 @@ enum PermissionKind: String, Identifiable, CaseIterable {
         let anchor: String
         switch self {
         case .doubaoInput: return nil
-        case .microphone: anchor = "Privacy_Microphone"
         case .accessibility: anchor = "Privacy_Accessibility"
         case .inputMonitoring: anchor = "Privacy_ListenEvent"
         case .bluetooth: anchor = "Privacy_Bluetooth"
@@ -47,7 +43,6 @@ enum PermissionKind: String, Identifiable, CaseIterable {
                 "doubaoinput1",
                 "doubaoinput2"
             ]
-        case .microphone: ["permission-microphone", "permission-microphone"]
         case .accessibility: ["permission-accessibility", "permission-accessibility"]
         case .inputMonitoring: ["permission-input-monitoring", "permission-input-monitoring"]
         case .bluetooth: ["permission-bluetooth", "permission-bluetooth"]
@@ -73,17 +68,6 @@ enum PermissionKind: String, Identifiable, CaseIterable {
                 L10n.text(
                     "选择“自动检测”或“vRemoteDr 2ch”。如果自动检测没有声音，请直接选择 vRemoteDr 2ch。",
                     "Choose Automatic Detection or vRemoteDr 2ch. If automatic detection is silent, select vRemoteDr 2ch directly."
-                )
-            ]
-        case .microphone:
-            return [
-                L10n.text(
-                    "系统设置会打开到“隐私与安全性 → 麦克风”。",
-                    "System Settings will open Privacy & Security > Microphone."
-                ),
-                L10n.text(
-                    "找到 vRemote（或 vRemoter），打开右侧开关；若已经打开，关闭后重新打开一次。",
-                    "Find vRemote or vRemoter and enable it. If already enabled, turn it off and on once."
                 )
             ]
         case .accessibility:
@@ -237,14 +221,11 @@ private final class ConsoleViewModel: ObservableObject {
     @Published var hidConnected = false
     @Published var bleConnected = false
     @Published var remoteStreaming = false
-    @Published var macInputEnabled = true
     @Published var remoteInputEnabled = true
     @Published var doubaoIsRecording = false
     @Published var doubaoInput = "--"
     @Published var driverAvailable = false
-    @Published var macLevelDB = -120.0
     @Published var remoteLevelDB = -120.0
-    @Published var microphoneGranted = false
     @Published var accessibilityGranted = false
     @Published var inputMonitoringGranted = false
     @Published var bluetoothGranted = false
@@ -258,14 +239,11 @@ private final class ConsoleViewModel: ObservableObject {
 
     var onStopMicrophone: (() -> Void)?
     var onRestartApp: (() -> Void)?
-    var onMacInputEnabledChanged: ((Bool) -> Void)?
     var onRemoteInputEnabledChanged: ((Bool) -> Void)?
     var onInputTriggerChanged: (() -> Void)?
     var onRemoteMappingEnabledChanged: ((SupportedRemoteID, Bool) -> Void)?
 
     var doubaoUsesVRemote: Bool { doubaoInput.contains("vRemoteDr 2ch") }
-    var macSolo: Bool { macInputEnabled && !remoteInputEnabled }
-    var remoteSolo: Bool { remoteInputEnabled && !macInputEnabled }
 
     func setInputTrigger(_ trigger: InputTriggerKey) {
         guard inputTriggerKey != trigger else { return }
@@ -279,45 +257,21 @@ private final class ConsoleViewModel: ObservableObject {
         onRemoteMappingEnabledChanged?(remote, enabled)
     }
 
-    func toggleMacMute() {
-        let next = !macInputEnabled
-        macInputEnabled = next
-        onMacInputEnabledChanged?(next)
-    }
-
     func toggleRemoteMute() {
         let next = !remoteInputEnabled
         remoteInputEnabled = next
         onRemoteInputEnabledChanged?(next)
     }
 
-    func toggleMacSolo() {
-        let shouldSolo = !macSolo
-        macInputEnabled = true
-        remoteInputEnabled = !shouldSolo
-        onMacInputEnabledChanged?(true)
-        onRemoteInputEnabledChanged?(!shouldSolo)
-    }
-
-    func toggleRemoteSolo() {
-        let shouldSolo = !remoteSolo
-        remoteInputEnabled = true
-        macInputEnabled = !shouldSolo
-        onRemoteInputEnabledChanged?(true)
-        onMacInputEnabledChanged?(!shouldSolo)
-    }
-
     func refreshPermissions() {
         let demoMode = ProcessInfo.processInfo.environment["VREMOTER_PERMISSION_DEMO"] == "1"
             || CommandLine.arguments.contains("--permission-demo")
         if demoMode {
-            microphoneGranted = false
             accessibilityGranted = false
             inputMonitoringGranted = false
             bluetoothGranted = false
             return
         }
-        microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         accessibilityGranted = AXIsProcessTrusted()
         inputMonitoringGranted = CGPreflightListenEventAccess()
         if #available(macOS 11.0, *) {
@@ -383,7 +337,6 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
 
     var onStopMicrophone: (() -> Void)?
     var onRestartApp: (() -> Void)?
-    var onMacInputEnabledChanged: ((Bool) -> Void)?
     var onRemoteInputEnabledChanged: ((Bool) -> Void)?
     var onInputTriggerChanged: (() -> Void)?
     var onRemoteMappingEnabledChanged: ((SupportedRemoteID, Bool) -> Void)?
@@ -419,9 +372,6 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
 
         model.onStopMicrophone = { [weak self] in self?.onStopMicrophone?() }
         model.onRestartApp = { [weak self] in self?.onRestartApp?() }
-        model.onMacInputEnabledChanged = { [weak self] enabled in
-            self?.onMacInputEnabledChanged?(enabled)
-        }
         model.onRemoteInputEnabledChanged = { [weak self] enabled in
             self?.onRemoteInputEnabledChanged?(enabled)
         }
@@ -458,14 +408,12 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
         hidConnected: Bool,
         bleConnected: Bool,
         remoteStreaming: Bool,
-        macInputEnabled: Bool,
         remoteInputEnabled: Bool,
         doubaoIsRecording: Bool,
         doubaoInput: String,
         driverAvailable: Bool,
         x6Connected: Bool,
         chromecastConnected: Bool,
-        macLevelDB: Double? = nil,
         remoteLevelDB: Double? = nil
     ) {
         DispatchQueue.main.async { [weak self] in
@@ -474,21 +422,15 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
             self.model.hidConnected = hidConnected
             self.model.bleConnected = bleConnected
             self.model.remoteStreaming = remoteStreaming
-            self.model.macInputEnabled = macInputEnabled
             self.model.remoteInputEnabled = remoteInputEnabled
             self.model.doubaoIsRecording = doubaoIsRecording
             self.model.doubaoInput = doubaoInput
             self.model.driverAvailable = driverAvailable
             self.model.x6Connected = x6Connected
             self.model.chromecastConnected = chromecastConnected
-            if let macLevelDB { self.model.macLevelDB = macLevelDB }
             if let remoteLevelDB { self.model.remoteLevelDB = remoteLevelDB }
             self.model.refreshPermissions()
         }
-    }
-
-    func updateMacLevel(_ db: Double) {
-        DispatchQueue.main.async { [weak self] in self?.model.macLevelDB = db }
     }
 
     func updateRemoteLevel(_ db: Double) {
@@ -567,7 +509,7 @@ private struct StudioMixerView: View {
                 Text("vRemoter")
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(ConsoleTheme.text)
-                Text(L10n.text("双麦语音输入", "Dual microphone input"))
+                Text(L10n.text("遥控器语音输入", "Remote microphone input"))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(ConsoleTheme.secondary)
             }
@@ -598,7 +540,7 @@ private struct StudioMixerView: View {
     }
 
     private var statusText: String {
-        if !model.microphoneGranted || !model.accessibilityGranted || !model.inputMonitoringGranted {
+        if !model.accessibilityGranted || !model.inputMonitoringGranted {
             return L10n.text("需要处理", "Action needed")
         }
         if model.hidConnected && model.bleConnected {
@@ -609,7 +551,7 @@ private struct StudioMixerView: View {
 
     private var statusColor: Color {
         if model.remoteStreaming { return ConsoleTheme.amber }
-        if !model.microphoneGranted || !model.accessibilityGranted || !model.inputMonitoringGranted {
+        if !model.accessibilityGranted || !model.inputMonitoringGranted {
             return ConsoleTheme.red
         }
         return model.hidConnected && model.bleConnected
@@ -620,29 +562,16 @@ private struct StudioMixerView: View {
     private var mixer: some View {
         HStack(spacing: 0) {
             InputChannelView(
-                title: L10n.text("MacBook 麦克风", "MacBook Mic"),
-                subtitle: L10n.text("电脑内置", "Built in"),
-                db: model.macLevelDB,
-                enabled: model.macInputEnabled,
-                solo: model.macSolo,
-                onMute: model.toggleMacMute,
-                onSolo: model.toggleMacSolo
-            )
-            .frame(width: 225)
-            Divider().overlay(ConsoleTheme.lineSoft)
-            InputChannelView(
                 title: L10n.text("遥控器麦克风", "Remote Mic"),
                 subtitle: L10n.text("蓝牙语音遥控器", "Bluetooth Voice Remote"),
                 db: model.remoteLevelDB,
                 enabled: model.remoteInputEnabled,
-                solo: model.remoteSolo,
                 purchaseLink: !commerce.config.availableStores.isEmpty,
                 showTestHint: model.showX6MicHint && model.hidConnected && model.bleConnected,
                 onPurchase: model.showPurchase,
-                onMute: model.toggleRemoteMute,
-                onSolo: model.toggleRemoteSolo
+                onMute: model.toggleRemoteMute
             )
-            .frame(width: 224)
+            .frame(maxWidth: .infinity)
             Divider().overlay(ConsoleTheme.lineSoft)
             OutputChannelView(model: model)
                 .frame(width: 284)
@@ -683,15 +612,6 @@ private struct StudioMixerView: View {
                     ? nil
                     : L10n.text("蓝牙设置", "Bluetooth settings"),
                 onAction: { model.activeModal = .permission(.bluetooth) }
-            )
-            StatusRow(
-                title: L10n.text("麦克风权限", "Microphone"),
-                value: model.microphoneGranted
-                    ? L10n.text("已授权", "Granted")
-                    : L10n.text("未授权", "Not granted"),
-                tone: model.microphoneGranted ? .good : .error,
-                action: model.microphoneGranted ? nil : L10n.text("去授权", "Grant"),
-                onAction: { model.activeModal = .permission(.microphone) }
             )
             StatusRow(
                 title: L10n.text("辅助功能权限", "Accessibility"),
@@ -1259,12 +1179,10 @@ private struct InputChannelView: View {
     let subtitle: String
     let db: Double
     let enabled: Bool
-    let solo: Bool
     var purchaseLink = false
     var showTestHint = false
     var onPurchase: (() -> Void)?
     let onMute: () -> Void
-    let onSolo: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1278,15 +1196,13 @@ private struct InputChannelView: View {
                 .padding(.top, 4)
             HStack(spacing: 6) {
                 Circle()
-                    .fill(enabled ? (solo ? ConsoleTheme.amber : ConsoleTheme.green) : ConsoleTheme.tertiary)
+                    .fill(enabled ? ConsoleTheme.green : ConsoleTheme.tertiary)
                     .frame(width: 10, height: 10)
                 Text(enabled
-                    ? (solo
-                        ? L10n.text("正在独奏", "Solo")
-                        : L10n.text("有声音", "Active"))
-                    : L10n.text("不参与混合", "Muted"))
+                    ? L10n.text("有声音", "Active")
+                    : L10n.text("已静音", "Muted"))
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(enabled ? (solo ? ConsoleTheme.amber : ConsoleTheme.secondary) : ConsoleTheme.tertiary)
+                    .foregroundStyle(enabled ? ConsoleTheme.secondary : ConsoleTheme.tertiary)
                 Spacer()
                 Text(dbText)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -1328,24 +1244,22 @@ private struct InputChannelView: View {
             .frame(width: 141)
             .padding(.top, 6)
             HStack(spacing: 8) {
-                Button(L10n.text("静音", "Mute"), action: onMute)
+                Button(
+                    enabled
+                        ? L10n.text("静音", "Mute")
+                        : L10n.text("启用", "Enable"),
+                    action: onMute
+                )
                     .buttonStyle(ConsoleButtonStyle(
                         tone: enabled ? .neutral : .error,
-                        consoleSized: true
-                    ))
-                Button(L10n.text("独奏", "Solo"), action: onSolo)
-                    .buttonStyle(ConsoleButtonStyle(
-                        tone: solo ? .warning : .neutral,
                         consoleSized: true
                     ))
             }
             .padding(.top, 31)
             HStack(spacing: 4) {
                 Text(enabled
-                    ? (solo
-                        ? L10n.text("仅此路参与", "Solo input")
-                        : L10n.text("参与混合", "In mix"))
-                    : L10n.text("不参与混合", "Not in mix"))
+                    ? L10n.text("输入已开启", "Input on")
+                    : L10n.text("输入已关闭", "Input off"))
                 Spacer()
                 if purchaseLink {
                     Button(L10n.text("购买遥控器 ↗", "Buy remote ↗")) {
@@ -1362,11 +1276,6 @@ private struct InputChannelView: View {
         .padding(.horizontal, 23)
         .padding(.top, 23)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(solo ? ConsoleTheme.amber.opacity(0.06) : Color.clear)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(solo ? ConsoleTheme.amber : Color.clear, lineWidth: 1)
-        )
         .opacity(enabled ? 1 : 0.58)
     }
 
@@ -1381,7 +1290,7 @@ private struct OutputChannelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(L10n.text("混合输出", "Mixed Output"))
+            Text(L10n.text("音频输出", "Audio Output"))
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(ConsoleTheme.text)
             Text(L10n.text("发送给豆包", "Sent to Doubao"))
@@ -1405,7 +1314,7 @@ private struct OutputChannelView: View {
             }
             .padding(.top, 15)
             MeterView(
-                db: outputError ? -120 : max(model.macLevelDB, model.remoteLevelDB),
+                db: outputError ? -120 : model.remoteLevelDB,
                 color: ConsoleTheme.amber,
                 count: 14
             )
@@ -1893,7 +1802,6 @@ private struct GuideScreenshot: View {
     private var secondPageY: CGFloat {
         switch kind {
         case .doubaoInput: 0.5
-        case .microphone: 0.92
         case .accessibility: 0.89
         case .inputMonitoring: 0.46
         case .bluetooth: 0.74

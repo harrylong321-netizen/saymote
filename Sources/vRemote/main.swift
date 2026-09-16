@@ -280,9 +280,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Start the loopback engine eagerly so device binding is verified
         // before the first BLE audio packet arrives.
         _ = AudioPipe.shared
-        AudioPipe.shared.onMacLevel = { [weak self] db in
-            self?.debugWindow.updateMacLevel(db)
-        }
         AudioPipe.shared.onRouteChanged = { [weak self] _ in
             self?.updateStatus()
         }
@@ -444,14 +441,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             hidConnected: anyHID,
             bleConnected: anyBLE,
             remoteStreaming: remoteStreaming,
-            macInputEnabled: AudioPipe.shared.isMacInputEnabled,
             remoteInputEnabled: AudioPipe.shared.isRemoteInputEnabled,
             doubaoIsRecording: doubaoSnapshot.isRecording,
             doubaoInput: doubaoSnapshot.deviceSummary,
             driverAvailable: AudioPipe.shared.isOutputDeviceAvailable,
             x6Connected: x6HIDConnected || x6BLEConnected,
             chromecastConnected: chromecastHIDConnected || chromecastBLEConnected,
-            macLevelDB: nil,
             remoteLevelDB: nil
         )
     }
@@ -463,20 +458,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         debugWindow.onRestartApp = { [weak self] in
             self?.restartAppNow()
         }
-        debugWindow.onMacInputEnabledChanged = { [weak self] enabled in
-            let audio = AudioPipe.shared
-            audio.setInputEnabled(
-                mac: enabled,
-                remote: audio.isRemoteInputEnabled
-            )
-            self?.updateStatus()
-        }
         debugWindow.onRemoteInputEnabledChanged = { [weak self] enabled in
             let audio = AudioPipe.shared
-            audio.setInputEnabled(
-                mac: audio.isMacInputEnabled,
-                remote: enabled
-            )
+            audio.setInputEnabled(remote: enabled)
             if !enabled {
                 self?.x6BLE.closeMicrophone(force: true)
                 self?.chromecastBLE.closeMicrophone(force: true)

@@ -2,7 +2,6 @@ import Foundation
 
 enum AppStorage {
     static let loggingEnabledKey = "loggingEnabled"
-    static let macInputEnabledKey = "macInputEnabled"
     static let remoteInputEnabledKey = "remoteInputEnabled"
     static let inputTriggerKeyKey = "inputTriggerKey"
 
@@ -21,7 +20,6 @@ enum AppStorage {
     static func prepare() {
         UserDefaults.standard.register(defaults: [
             loggingEnabledKey: false,
-            macInputEnabledKey: true,
             remoteInputEnabledKey: true,
             inputTriggerKeyKey: InputTriggerKey.option.rawValue,
         ])
@@ -34,11 +32,6 @@ enum AppStorage {
     static var loggingEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: loggingEnabledKey) }
         set { UserDefaults.standard.set(newValue, forKey: loggingEnabledKey) }
-    }
-
-    static var macInputEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: macInputEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: macInputEnabledKey) }
     }
 
     static var remoteInputEnabled: Bool {
