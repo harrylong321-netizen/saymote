@@ -28,8 +28,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var launchAtLoginItem: NSMenuItem!
     private var loggingToggleItem: NSMenuItem!
     private var logSizeItem: NSMenuItem!
-    private var recordingToggleItem: NSMenuItem!
-    private var recordingSizeItem: NSMenuItem!
     private var languageItems: [AppLanguage: NSMenuItem] = [:]
 
     private var x6HIDConnected = false
@@ -54,14 +52,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let x6BLE = BLEBridge(
         nameHint: "X6-Remote",
         savedUUIDFilename: "x6-uuid.txt",
-        recordingPrefix: "x6-voice",
         logTag: "X6-BLE",
         resetSessionOnConnect: true
     )
     private let chromecastBLE = BLEBridge(
         nameHint: "Chromecast Remote",
         savedUUIDFilename: "chromecast-remote-uuid.txt",
-        recordingPrefix: "chromecast-remote-voice",
         logTag: "CAST-BLE",
         resetSessionOnConnect: true
     )
@@ -109,7 +105,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(makeControlMenu())
         menu.addItem(makeLogMenu())
-        menu.addItem(makeRecordingMenu())
         menu.addItem(makeLanguageMenu())
 
         menu.addItem(.separator())
@@ -410,52 +405,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return root
     }
 
-    private func makeRecordingMenu() -> NSMenuItem {
-        let root = NSMenuItem(title: L10n.text("调试录音", "Debug recordings"), action: nil, keyEquivalent: "")
-        let submenu = NSMenu(title: L10n.text("调试录音", "Debug recordings"))
-
-        let toggle = NSMenuItem(
-            title: L10n.text("保存 WAV 与原始数据", "Save WAV and raw data"),
-            action: #selector(toggleRecording),
-            keyEquivalent: ""
-        )
-        toggle.target = self
-        submenu.addItem(toggle)
-        recordingToggleItem = toggle
-
-        let size = NSMenuItem(title: L10n.text("占用 · 0 字节", "Size · 0 bytes"), action: nil, keyEquivalent: "")
-        size.isEnabled = false
-        submenu.addItem(size)
-        recordingSizeItem = size
-
-        let refresh = NSMenuItem(
-            title: L10n.text("刷新占用大小", "Refresh size"),
-            action: #selector(refreshStorageSizes),
-            keyEquivalent: ""
-        )
-        refresh.target = self
-        submenu.addItem(refresh)
-
-        let open = NSMenuItem(
-            title: L10n.text("打开录音文件夹", "Open recordings folder"),
-            action: #selector(openRecordingFolder),
-            keyEquivalent: ""
-        )
-        open.target = self
-        submenu.addItem(open)
-
-        let clear = NSMenuItem(
-            title: L10n.text("清空录音文件", "Clear recordings"),
-            action: #selector(clearRecordings),
-            keyEquivalent: ""
-        )
-        clear.target = self
-        submenu.addItem(clear)
-
-        root.submenu = submenu
-        return root
-    }
-
     private func makeLanguageMenu() -> NSMenuItem {
         let root = NSMenuItem(
             title: L10n.text("语言", "Language"),
@@ -672,18 +621,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func refreshMenuState() {
         launchAtLoginItem?.state = LaunchAtLogin.isEnabled ? .on : .off
         loggingToggleItem?.state = Log.isEnabled ? .on : .off
-        recordingToggleItem?.state = AppStorage.recordingEnabled ? .on : .off
         refreshSizeLabels()
     }
 
     private func refreshSizeLabels() {
         logSizeItem?.title = L10n.text("占用", "Size")
             + " · \(AppStorage.formattedSize(Log.byteSize))"
-        let recordingBytes = AppStorage.byteSize(
-            of: AppStorage.recordingsDirectory
-        )
-        recordingSizeItem?.title = L10n.text("占用", "Size")
-            + " · \(AppStorage.formattedSize(recordingBytes))"
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -706,14 +649,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshMenuState()
     }
 
-    @objc private func toggleRecording() {
-        let enabled = !AppStorage.recordingEnabled
-        AppStorage.recordingEnabled = enabled
-        x6BLE.setRecordingEnabled(enabled)
-        chromecastBLE.setRecordingEnabled(enabled)
-        refreshMenuState()
-    }
-
     @objc private func refreshStorageSizes() {
         refreshSizeLabels()
     }
@@ -723,18 +658,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(AppStorage.logsDirectory)
     }
 
-    @objc private func openRecordingFolder() {
-        AppStorage.ensureDirectory(AppStorage.recordingsDirectory)
-        NSWorkspace.shared.open(AppStorage.recordingsDirectory)
-    }
-
     @objc private func clearLog() {
         Log.clear()
-        refreshSizeLabels()
-    }
-
-    @objc private func clearRecordings() {
-        x6BLE.clearRecordings()
         refreshSizeLabels()
     }
 

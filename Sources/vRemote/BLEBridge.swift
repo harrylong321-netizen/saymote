@@ -21,7 +21,6 @@ final class BLEBridge: NSObject {
     // This V2 bridge owns one X6 ATVV connection.
     private let nameHint: String?
     private let savedUUIDPath: String
-    private let recordingPrefix: String
     private let logTag: String
     private let resetSessionOnConnect: Bool
 
@@ -69,7 +68,6 @@ final class BLEBridge: NSObject {
     private var streamClippedSampleCount = 0
     private var pendingAudioSyncCount = 0
     private var streamAudioSyncCount = 0
-    private var wavRecorder: WavRecorder?
     // Verbose PCM diagnostics are off unless explicitly requested.
     private static let diagnosticsEnabled =
         ProcessInfo.processInfo.environment["MIA_DIAGNOSTICS"] == "1"
@@ -81,7 +79,6 @@ final class BLEBridge: NSObject {
     init(
         nameHint: String?,
         savedUUIDFilename: String,
-        recordingPrefix: String,
         logTag: String,
         resetSessionOnConnect: Bool
     ) {
@@ -89,7 +86,6 @@ final class BLEBridge: NSObject {
         self.savedUUIDPath = URL(
             fileURLWithPath: Self.appSupportDirectory
         ).appendingPathComponent(savedUUIDFilename).path
-        self.recordingPrefix = recordingPrefix
         self.logTag = logTag
         self.resetSessionOnConnect = resetSessionOnConnect
         super.init()
@@ -124,16 +120,6 @@ final class BLEBridge: NSObject {
         audioChar = nil
         commandChar = nil
         controlChar = nil
-    }
-
-    func setRecordingEnabled(_ enabled: Bool) {
-        AppStorage.recordingEnabled = enabled
-        if enabled, isStreaming, wavRecorder == nil {
-            wavRecorder = WavRecorder.createNext(prefix: recordingPrefix)
-        } else if !enabled, let recorder = wavRecorder {
-            recorder.close()
-            wavRecorder = nil
-        }
     }
 
     @discardableResult
@@ -206,14 +192,6 @@ final class BLEBridge: NSObject {
                 error.localizedDescription
             )
         }
-    }
-
-    func clearRecordings() {
-        if let recorder = wavRecorder {
-            recorder.close()
-            wavRecorder = nil
-        }
-        AppStorage.clearFiles(in: AppStorage.recordingsDirectory)
     }
 
     /// If we have a saved UUID from a previous scan, ask CoreBluetooth for
@@ -381,11 +359,6 @@ final class BLEBridge: NSObject {
         levelPeak = 0
         onLevel?(-120, 0)
         diagFrameCount = 0
-        if let w = wavRecorder {
-            w.close()
-            print("[WAV] closed \(w.filename)")
-            wavRecorder = nil
-        }
         let streamRMS = streamSampleCount > 0
             ? sqrt(Double(streamSumSquares) / Double(streamSampleCount))
             : 0
@@ -614,9 +587,6 @@ extension BLEBridge: CBPeripheralDelegate {
             streamClippedSampleCount = 0
             streamAudioSyncCount = pendingAudioSyncCount
             pendingAudioSyncCount = 0
-            wavRecorder = AppStorage.recordingEnabled
-                ? WavRecorder.createNext(prefix: recordingPrefix)
-                : nil
             startKeepAliveTimer()
             print(
                 "[\(logTag)] AUDIO_START reason=" +
@@ -635,11 +605,6 @@ extension BLEBridge: CBPeripheralDelegate {
             onLevel?(-120, 0)
             diagFrameCount = 0
             stopKeepAliveTimer()
-            if let w = wavRecorder {
-                w.close()
-                print("[WAV] closed \(w.filename)")
-                wavRecorder = nil
-            }
             let streamRMS = streamSampleCount > 0
                 ? sqrt(Double(streamSumSquares) / Double(streamSampleCount))
                 : 0
@@ -739,13 +704,6 @@ extension BLEBridge: CBPeripheralDelegate {
             let samHex = frame.samples.prefix(8).map { String($0) }.joined(separator: ",")
             print("[AUDIO-DIAG] frame#\(diagFrameCount) raw[\(rawHex)] decoded[\(samHex)]")
             diagFrameCount += 1
-        }
-
-        // Optional developer-only recording. Production builds never create
-        // a WAV because `recordingEnabled` is false.
-        if let w = wavRecorder {
-            w.appendSamples(frame.samples)
-            w.appendRawBytes(data)
         }
 
         AudioPipe.shared.feed(samples: frame.samples)

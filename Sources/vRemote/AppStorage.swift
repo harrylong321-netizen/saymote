@@ -2,7 +2,6 @@ import Foundation
 
 enum AppStorage {
     static let loggingEnabledKey = "loggingEnabled"
-    static let recordingEnabledKey = "recordingEnabled"
     static let macInputEnabledKey = "macInputEnabled"
     static let remoteInputEnabledKey = "remoteInputEnabled"
     static let inputTriggerKeyKey = "inputTriggerKey"
@@ -19,25 +18,15 @@ enum AppStorage {
             .appendingPathComponent("Library/Application Support/vRemote", isDirectory: true)
     }()
 
-    static let recordingsDirectory: URL = {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(
-                "Library/Application Support/vRemote/Recordings",
-                isDirectory: true
-            )
-    }()
-
     static func prepare() {
         UserDefaults.standard.register(defaults: [
             loggingEnabledKey: false,
-            recordingEnabledKey: false,
             macInputEnabledKey: true,
             remoteInputEnabledKey: true,
             inputTriggerKeyKey: InputTriggerKey.option.rawValue,
         ])
         ensureDirectory(logsDirectory)
         ensureDirectory(applicationSupportDirectory)
-        ensureDirectory(recordingsDirectory)
 
         // vRemote has its own storage namespace and never touches V1 data.
     }
@@ -45,11 +34,6 @@ enum AppStorage {
     static var loggingEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: loggingEnabledKey) }
         set { UserDefaults.standard.set(newValue, forKey: loggingEnabledKey) }
-    }
-
-    static var recordingEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: recordingEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: recordingEnabledKey) }
     }
 
     static var macInputEnabled: Bool {
