@@ -5,16 +5,13 @@ let package = Package(
     name: "vRemote",
     platforms: [.macOS(.v12)],
     dependencies: [
-        .package(
-            url: "https://github.com/TelemetryDeck/SwiftSDK.git",
-            exact: "2.9.10"
-        )
+        .package(name: "TelemetryDeck", path: "../SwiftSDK-local")
     ],
     targets: [
         .executableTarget(
             name: "vRemote",
             dependencies: [
-                .product(name: "TelemetryDeck", package: "SwiftSDK")
+                .product(name: "TelemetryDeck", package: "TelemetryDeck")
             ],
             path: "Sources/vRemote",
             swiftSettings: [
