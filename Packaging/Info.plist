@@ -28,9 +28,7 @@
     <true/>
     <key>VRReleasesURL</key>
     <string>https://updates.vincentstudio.org/vremoter/releases.json</string>
-    <key>VRCommerceConfigURL</key>
-    <string>https://updates.vincentstudio.org/vremoter/commerce.json</string>
-	<key>VRTelemetryDeckAppID</key>
+    <key>VRTelemetryDeckAppID</key>
 	<string>0B41E7AD-49DA-4A8F-B216-BCF13B3A2D25</string>
 	<key>VRTelemetryDeckNamespace</key>
 	<string>cn.live</string>

@@ -287,11 +287,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.debugWindow.show()
         }
-        if CommandLine.arguments.contains("--purchase-demo") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.debugWindow.showPurchase()
-            }
-        } else if CommandLine.arguments.contains("--update-available-demo") {
+        if CommandLine.arguments.contains("--update-available-demo") {
             print("[UPDATE] update-available demo requested")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.updateWindow.showDemoUpdate()

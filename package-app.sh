@@ -44,10 +44,6 @@ if [[ -d "$SCRIPT_DIR/Resources/PermissionGuides" ]]; then
   ditto "$SCRIPT_DIR/Resources/PermissionGuides" \
     "$CONTENTS/Resources/PermissionGuides"
 fi
-if [[ -d "$SCRIPT_DIR/Resources/Commerce" ]]; then
-  ditto "$SCRIPT_DIR/Resources/Commerce" \
-    "$CONTENTS/Resources/Commerce"
-fi
 if [[ -d "$SCRIPT_DIR/Resources/RemoteImages" ]]; then
   ditto "$SCRIPT_DIR/Resources/RemoteImages" \
     "$CONTENTS/Resources/RemoteImages"
