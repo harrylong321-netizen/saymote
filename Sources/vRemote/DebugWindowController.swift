@@ -197,15 +197,11 @@ private enum RemoteImageAsset {
 
 private enum ConsoleModal: Identifiable {
     case permission(PermissionKind)
-    case donationPrompt
-    case donation
     case purchase
 
     var id: String {
         switch self {
         case .permission(let kind): "permission-\(kind.id)"
-        case .donationPrompt: "donation-prompt"
-        case .donation: "donation"
         case .purchase: "purchase"
         }
     }
@@ -259,8 +255,6 @@ private final class ConsoleViewModel: ObservableObject {
     @Published var showX6MicHint = !UserDefaults.standard.bool(
         forKey: "vRemoter.hasCompletedX6MicTest"
     )
-
-    private var donationPromptShownInSession = false
 
     var onStopMicrophone: (() -> Void)?
     var onRestartApp: (() -> Void)?
@@ -331,7 +325,6 @@ private final class ConsoleViewModel: ObservableObject {
         } else {
             bluetoothGranted = true
         }
-        evaluateDonationPrompt()
     }
 
     func openSettings(for kind: PermissionKind) {
@@ -370,28 +363,10 @@ private final class ConsoleViewModel: ObservableObject {
         }
     }
 
-    func showDonation(manual: Bool = true) {
-        if manual { DonationPromptSchedule.markHandled() }
-        activeModal = .donation
-    }
-
     func showPurchase() {
         CommerceConfigModel.shared.refresh()
         AppAnalytics.signal("Commerce.opened")
         activeModal = .purchase
-    }
-
-    func showDonationFromPrompt() {
-        DonationPromptSchedule.markHandled()
-        activeModal = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            self?.activeModal = .donation
-        }
-    }
-
-    func dismissDonationPrompt() {
-        DonationPromptSchedule.markHandled()
-        activeModal = nil
     }
 
     func observeRemoteLevel(_ db: Double) {
@@ -401,30 +376,6 @@ private final class ConsoleViewModel: ObservableObject {
         showX6MicHint = false
     }
 
-    private func evaluateDonationPrompt() {
-        guard !donationPromptShownInSession else { return }
-        if CommandLine.arguments.contains("--donation-prompt-demo") {
-            presentDonationPrompt()
-            return
-        }
-        let doubaoHealthy = !doubaoIsRecording || doubaoUsesVRemote
-        let allHealthy = hidConnected
-            && bleConnected
-            && driverAvailable
-            && microphoneGranted
-            && accessibilityGranted
-            && inputMonitoringGranted
-            && doubaoHealthy
-        guard DonationPromptSchedule.shouldPresent(isHealthy: allHealthy) else { return }
-        presentDonationPrompt()
-    }
-
-    private func presentDonationPrompt() {
-        donationPromptShownInSession = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-            self?.activeModal = .donationPrompt
-        }
-    }
 }
 
 final class DebugWindowController: NSWindowController, NSWindowDelegate {
@@ -544,11 +495,6 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
         DispatchQueue.main.async { [weak self] in self?.model.observeRemoteLevel(db) }
     }
 
-    func showDonation() {
-        model.showDonation()
-        show()
-    }
-
     func showPurchase() {
         model.showPurchase()
         show()
@@ -594,10 +540,6 @@ private struct StudioMixerView: View {
         .padding(20)
         .frame(width: 775, height: 658)
         .background(ConsoleTheme.panel)
-        .overlay(alignment: .bottom) {
-            supportLink
-                .padding(.bottom, 8)
-        }
         .sheet(item: $model.activeModal) { modal in
             switch modal {
             case .permission(let kind):
@@ -606,13 +548,6 @@ private struct StudioMixerView: View {
                     onCancel: { model.activeModal = nil },
                     onOpenSettings: { model.openSettings(for: kind) }
                 )
-            case .donationPrompt:
-                DonationPromptView(
-                    onDonate: model.showDonationFromPrompt,
-                    onLater: model.dismissDonationPrompt
-                )
-            case .donation:
-                DonationView()
             case .purchase:
                 PurchaseView(model: .shared)
             }
@@ -660,22 +595,6 @@ private struct StudioMixerView: View {
         }
         .padding(.horizontal, 20)
         .background(panelBackground(ConsoleTheme.surface, radius: 19))
-    }
-
-    private var supportLink: some View {
-        Button {
-            model.showDonation()
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "cup.and.saucer.fill")
-                Text(L10n.text("打赏", "Buy me a coffee"))
-            }
-            .font(.system(size: 10.5, weight: .medium))
-            .foregroundStyle(ConsoleTheme.tertiary)
-            .fixedSize(horizontal: true, vertical: false)
-        }
-        .buttonStyle(.plain)
-        .help(L10n.text("支持 vRemoter", "Support vRemoter"))
     }
 
     private var statusText: String {
@@ -1747,157 +1666,6 @@ private extension CommerceStore {
         case "douyin": Color(red: 0.145, green: 0.902, blue: 0.941)
         default: ConsoleTheme.green
         }
-    }
-}
-
-private enum DonationProvider: String, CaseIterable, Identifiable {
-    case wechat
-    case alipay
-    case paypal
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .wechat: L10n.text("微信", "WeChat")
-        case .alipay: L10n.text("支付宝", "Alipay")
-        case .paypal: "PayPal"
-        }
-    }
-
-    var imageName: String {
-        switch self {
-        case .wechat: "IMG_5989.JPG"
-        case .alipay: "IMG_5987.JPG"
-        case .paypal: "IMG_5990.JPG"
-        }
-    }
-
-    var brandColor: Color {
-        switch self {
-        case .wechat: Color(red: 0.027, green: 0.757, blue: 0.376)
-        case .alipay: Color(red: 0.086, green: 0.467, blue: 1.0)
-        case .paypal: Color(red: 0.0, green: 0.188, blue: 0.529)
-        }
-    }
-}
-
-private struct DonationPromptView: View {
-    let onDonate: () -> Void
-    let onLater: () -> Void
-
-    var body: some View {
-        VStack(spacing: 22) {
-            Image(nsImage: LogoAsset.image)
-                .resizable()
-                .frame(width: 54, height: 54)
-            Text(L10n.text(
-                "制作不易，麻烦打个赏补偿一点我的 Token 费吧。\n谢主隆恩🙏🙏🙏～～～",
-                "vRemoter is free, but apparently tokens never got that memo. If the app saves you a little time, buying me a coffee helps keep it going. My API balance sends its thanks. 🙏"
-            ))
-                .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(ConsoleTheme.text)
-                .multilineTextAlignment(.center)
-                .lineSpacing(5)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 12) {
-                Button(L10n.text("以后再说", "Maybe later"), action: onLater)
-                    .keyboardShortcut(.cancelAction)
-                    .buttonStyle(ConsoleButtonStyle(tone: .neutral))
-                Button(L10n.text("立即打赏", "Buy me a coffee"), action: onDonate)
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(ConsoleButtonStyle(tone: ConsoleButtonTone.good))
-            }
-        }
-        .padding(30)
-        .frame(width: 560, height: 330)
-        .background(ConsoleTheme.panel)
-    }
-}
-
-private struct DonationView: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var provider: DonationProvider = .wechat
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Image(nsImage: LogoAsset.image)
-                    .resizable()
-                    .frame(width: 38, height: 38)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(L10n.text("给 vRemoter 打个赏", "Buy vRemoter a coffee"))
-                        .font(.system(size: 20, weight: .semibold))
-                    Text(L10n.text("感谢你帮我补一点 Token 费", "Free app, non-free tokens."))
-                        .font(.system(size: 11))
-                        .foregroundStyle(ConsoleTheme.secondary)
-                }
-                Spacer()
-            }
-
-            HStack(spacing: 8) {
-                ForEach(DonationProvider.allCases) { item in
-                    Button {
-                        provider = item
-                    } label: {
-                        Text(item.title)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(
-                                provider == item ? Color.white : item.brandColor
-                            )
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 36)
-                            .background(
-                                provider == item
-                                    ? item.brandColor
-                                    : ConsoleTheme.surface
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 7))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7)
-                                    .stroke(
-                                        provider == item
-                                            ? item.brandColor
-                                            : item.brandColor.opacity(0.65),
-                                        lineWidth: 1
-                                    )
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            ZStack {
-                ConsoleTheme.black
-                if let image = DonationAsset.image(named: provider.imageName) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFit()
-                        .padding(12)
-                } else {
-                    Text(L10n.text("收款码暂不可用", "Payment code unavailable"))
-                        .foregroundStyle(ConsoleTheme.secondary)
-                }
-            }
-            .frame(height: 390)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(ConsoleTheme.line))
-
-            HStack {
-                Text(L10n.text("请使用对应 App 扫码", "Scan with the corresponding app"))
-                    .font(.system(size: 11))
-                    .foregroundStyle(ConsoleTheme.secondary)
-                Spacer()
-                Button(L10n.text("完成", "Done")) { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(ConsoleButtonStyle(tone: ConsoleButtonTone.good))
-            }
-        }
-        .padding(24)
-        .frame(width: 620, height: 570)
-        .background(ConsoleTheme.panel)
-        .foregroundStyle(ConsoleTheme.text)
     }
 }
 

@@ -116,14 +116,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updates.target = self
         menu.addItem(updates)
 
-        let donation = NSMenuItem(
-            title: L10n.text("打赏", "Buy me a coffee"),
-            action: #selector(openDonation),
-            keyEquivalent: ""
-        )
-        donation.target = self
-        menu.addItem(donation)
-
         menu.addItem(.separator())
         let quit = NSMenuItem(
             title: L10n.text("退出", "Quit"),
@@ -509,10 +501,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openDebugWindow() {
         debugWindow.show()
-    }
-
-    @objc private func openDonation() {
-        debugWindow.showDonation()
     }
 
     @objc private func openVersionUpdates() {
