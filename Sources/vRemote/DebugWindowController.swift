@@ -942,11 +942,11 @@ private struct MappingRow: View {
                         )
                     ) {
                         ForEach(RemoteMappingTarget.allCases.filter { $0 != .doubaoVoice }) { target in
-                            Text(
-                                (target == .custom || target == .openApp)
-                                    ? mappings.targetTitle(for: button, remote: remote)
-                                    : target.title
-                            ).tag(target)
+                            // 只有「当前选中的那一项」显示动态名字（自定义按键的
+                            // 组合、所选 App 的名字）。其它项一律显示目标本身的名字，
+                            // 否则每一项都会显示成当前目标的标题（曾导致列表里出现
+                            // 两个「禁用」、两个「系统音量＋」）。
+                            Text(targetLabel(for: target)).tag(target)
                         }
                     }
                     .labelsHidden()
@@ -988,6 +988,16 @@ private struct MappingRow: View {
                 }
             )
         }
+    }
+
+    private var currentTarget: RemoteMappingTarget {
+        mappings.target(for: button, remote: remote)
+    }
+
+    private func targetLabel(for target: RemoteMappingTarget) -> String {
+        target == currentTarget
+            ? mappings.targetTitle(for: button, remote: remote)
+            : target.title
     }
 
     /// 选一个 App 作为这个按键的动作。用「/应用程序」作为起始目录，
