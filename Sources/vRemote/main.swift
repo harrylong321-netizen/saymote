@@ -24,6 +24,7 @@ import Foundation
 
 final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
+    private var statusMenu: NSMenu!
     private var headerLabel: NSMenuItem!
     private var launchAtLoginItem: NSMenuItem!
     private var loggingToggleItem: NSMenuItem!
@@ -82,6 +83,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.image = statusImage
         statusItem.button?.imagePosition = .imageOnly
         statusItem.button?.title = ""
+        // 左键单击直接开控制台，右键（含触控板双指点按）才弹菜单。
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(statusItemClicked)
+        statusItem.button?.cell?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         NSApp.applicationIconImage = LogoAsset.image
 
         let menu = NSMenu()
@@ -126,7 +131,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         quit.target = self
         menu.addItem(quit)
-        statusItem.menu = menu
+        // 注意：这里**不设置** statusItem.menu。一旦设了，按钮的点击就会被
+        // 菜单接管，我们自己的 action 收不到事件。菜单改由 statusItemClicked
+        // 在右键时手动弹出。
+        statusMenu = menu
         refreshMenuState()
         wireDebugWindow()
 
@@ -499,6 +507,24 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openDebugWindow() {
         debugWindow.show()
+    }
+
+    /// 状态栏图标：左键单击 → 直接打开控制台；右键单击（触控板双指点按，
+    /// 或 Control+左键）→ 弹出下拉菜单。
+    @objc private func statusItemClicked() {
+        let event = NSApp.currentEvent
+        let isSecondary = event?.type == .rightMouseUp
+            || event?.modifierFlags.contains(.control) == true
+        guard isSecondary, let button = statusItem.button else {
+            debugWindow.show()
+            return
+        }
+        refreshMenuState()
+        statusMenu.popUp(
+            positioning: nil,
+            at: NSPoint(x: 0, y: button.bounds.height + 4),
+            in: button
+        )
     }
 
     @objc private func openVersionUpdates() {
