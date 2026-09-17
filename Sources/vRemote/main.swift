@@ -283,6 +283,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         AudioPipe.shared.onRouteChanged = { [weak self] _ in
             self?.updateStatus()
         }
+        AudioPipe.shared.onRemoteAudioArrived = { [weak self] in
+            self?.x6Session.remoteAudioObserved()
+        }
 
         DispatchQueue.main.async { [weak self] in
             self?.debugWindow.show()
@@ -419,7 +422,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let doubaoSnapshot = doubaoAudioState.snapshotNow()
         let doubaoUsesVRemote = doubaoSnapshot.inputDeviceNames.contains("vRemoteDr 2ch")
         let statusText: String
-        if doubaoSnapshot.isRecording && !doubaoUsesVRemote {
+        if let warning = x6Session.audioWarningText {
+            statusText = warning
+        } else if doubaoSnapshot.isRecording && !doubaoUsesVRemote {
             statusText = L10n.text("豆包输入设备错误", "Incorrect Doubao input")
         } else if remoteStreaming {
             statusText = L10n.text("遥控器录音中", "Remote recording")

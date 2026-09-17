@@ -60,6 +60,11 @@ final class X6SessionCoordinator {
     }
 
     private static let remoteHoldThreshold: TimeInterval = 0.55
+    /// 实测：Chromecast 遥控器的语音键短于约 0.14 秒时，固件不会真正启动
+    /// 麦克风（它会确认开麦指令却一个采样都不产生）。低于这个时长就提示用户。
+    private static let shortPressThreshold: TimeInterval = 0.15
+    /// 开麦后等待音频出现的时长，超过即认为遥控器没有真正开麦。
+    private static let audioArrivalTimeout: TimeInterval = 0.5
     private static let openConfirmationTimeout: TimeInterval = 1.0
     private static let closeVerificationTimeout: TimeInterval = 1.2
     private static let maximumOpenAttempts = 3
@@ -77,6 +82,12 @@ final class X6SessionCoordinator {
     private var streamingRemotes = Set<VoiceRemoteID>()
     private var openRequestedRemote: VoiceRemoteID?
     private var physicalVoiceGestures = [VoiceRemoteID: PhysicalVoiceGesture]()
+    /// 本次会话是否已经收到遥控器的音频采样。
+    private var audioObservedThisSession = false
+    private var audioArrivalCheck: DispatchWorkItem?
+
+    /// 遥控器没有真正开麦时置位，供菜单栏显示明确提示。
+    private(set) var audioWarningText: String?
 
     private var routeCloseWorkItem: DispatchWorkItem?
     private var startVerificationWorkItem: DispatchWorkItem?
@@ -283,6 +294,7 @@ final class X6SessionCoordinator {
                 bypassDebounce: true,
                 attempt: 1
             )
+            scheduleAudioArrivalCheck(pressDuration: duration)
             publish("豆包录音中 · 遥控器持续收音")
             return
         }
@@ -521,6 +533,8 @@ final class X6SessionCoordinator {
     private func beginOpeningWithoutRemote() {
         generation &+= 1
         cancelScheduledWork()
+        audioObservedThisSession = false
+        clearAudioWarning()
         phase = .opening
         owner = .keyboard
         sessionRemote = nil
@@ -598,6 +612,8 @@ final class X6SessionCoordinator {
     private func finalizeClosed(reason: String) {
         generation &+= 1
         cancelScheduledWork()
+        audioObservedThisSession = false
+        clearAudioWarning()
         phase = .closed
         owner = .none
         sessionRemote = nil
@@ -875,9 +891,57 @@ final class X6SessionCoordinator {
         openRetryWorkItem = nil
         openConfirmationWorkItem?.cancel()
         openConfirmationWorkItem = nil
+        audioArrivalCheck?.cancel()
+        audioArrivalCheck = nil
     }
 
     private func publish(_ status: String) {
         onStateChanged?(status)
+    }
+
+    // MARK: - Remote microphone health
+
+    /// 遥控器音频已经到达：清掉「没有开麦」的提示。
+    func remoteAudioObserved() {
+        audioObservedThisSession = true
+        guard audioWarningText != nil else { return }
+        clearAudioWarning()
+        publish("豆包录音中 · 遥控器持续收音")
+    }
+
+    private func clearAudioWarning() {
+        audioWarningText = nil
+    }
+
+    /// 开麦指令发出后等待音频。超时未收到音频时给出明确提示——短按是
+    /// 已知的最常见原因，遥控器固件会确认指令但不产生任何采样。
+    private func scheduleAudioArrivalCheck(pressDuration: TimeInterval) {
+        audioArrivalCheck?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.audioObservedThisSession else { return }
+            let tooShort = pressDuration < Self.shortPressThreshold
+            let text = tooShort
+                ? L10n.text("按键太短 · 遥控器未开麦（请按住 0.2 秒）",
+                            "Press too short · Remote mic stayed off (hold 0.2s)")
+                : L10n.text("遥控器未送出音频",
+                            "Remote sent no audio")
+            self.audioWarningText = text
+            print(
+                String(
+                    format:
+                        "[VOICE-SESSION] ⚠️ 遥控器没有开麦 " +
+                        "press=%.3fs short=%@",
+                    pressDuration,
+                    tooShort ? "true" : "false"
+                )
+            )
+            print("[VOICE-SESSION] ⚠️ \(text)")
+            self.publish(text)
+        }
+        audioArrivalCheck = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.audioArrivalTimeout,
+            execute: work
+        )
     }
 }

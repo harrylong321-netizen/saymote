@@ -40,6 +40,8 @@ final class AudioPipe: NSObject {
     private var diagnosticsTimer: Timer?
 
     var onRouteChanged: ((Bool) -> Void)?
+    /// 遥控器音频第一次到达（本会话内）时回调，用于确认麦克风真的开麦。
+    var onRemoteAudioArrived: (() -> Void)?
 
     private override init() {
         super.init()
@@ -64,6 +66,7 @@ final class AudioPipe: NSObject {
         guard !samples.isEmpty else { return }
         let state = inputState
         guard state.mixActive, state.remoteEnabled else { return }
+        onRemoteAudioArrived?()
         let floatSamples = samples.map { sample -> Float in
             let amplified = Float(sample) / 32768.0 * Self.remoteGain
             return max(-1.0, min(1.0, amplified))
