@@ -3,6 +3,7 @@ import ApplicationServices
 import CoreBluetooth
 import CoreGraphics
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum PermissionKind: String, Identifiable, CaseIterable {
     case doubaoInput
@@ -931,6 +932,9 @@ private struct MappingRow: View {
                             set: { target in
                                 if target == .custom {
                                     showRecorder = true
+                                } else if target == .openApp {
+                                    mappings.setTarget(target, for: button, remote: remote)
+                                    chooseApp()
                                 } else {
                                     mappings.setTarget(target, for: button, remote: remote)
                                 }
@@ -939,7 +943,7 @@ private struct MappingRow: View {
                     ) {
                         ForEach(RemoteMappingTarget.allCases.filter { $0 != .doubaoVoice }) { target in
                             Text(
-                                target == .custom
+                                (target == .custom || target == .openApp)
                                     ? mappings.targetTitle(for: button, remote: remote)
                                     : target.title
                             ).tag(target)
@@ -954,6 +958,13 @@ private struct MappingRow: View {
                         .buttonStyle(.plain)
                         .foregroundStyle(ConsoleTheme.green)
                         .help(L10n.text("重新录制按键", "Record again"))
+                    } else if mappings.target(for: button, remote: remote) == .openApp {
+                        Button { chooseApp() } label: {
+                            Image(systemName: "app.badge")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(ConsoleTheme.green)
+                        .help(L10n.text("重新选择应用", "Choose another app"))
                     }
                 }
             }
@@ -977,6 +988,36 @@ private struct MappingRow: View {
                 }
             )
         }
+    }
+
+    /// 选一个 App 作为这个按键的动作。用「/应用程序」作为起始目录，
+    /// 只允许选 .app。
+    private func chooseApp() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.prompt = L10n.text("选择", "Choose")
+        panel.message = L10n.text(
+            "选择按下「\(button.title)」时要打开的 App",
+            "Choose the app to open when \(button.title) is pressed"
+        )
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let bundle = Bundle(url: url),
+              let bundleID = bundle.bundleIdentifier
+        else {
+            print("[MAPPING] ⚠️ 选中的不是可用的 App：\(url.path)")
+            return
+        }
+        let name = bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
+            ?? url.deletingPathExtension().lastPathComponent
+        mappings.setAppMapping(
+            RemoteAppMapping(bundleID: bundleID, name: name, path: url.path),
+            for: button,
+            remote: remote
+        )
     }
 }
 

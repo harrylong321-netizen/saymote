@@ -120,6 +120,7 @@ enum RemoteMappingTarget: String, CaseIterable, Identifiable, Codable, Hashable 
     case commandC
     case commandV
     case commandZ
+    case openApp
     case custom
 
     var id: String { rawValue }
@@ -150,6 +151,7 @@ enum RemoteMappingTarget: String, CaseIterable, Identifiable, Codable, Hashable 
         case .commandC: L10n.text("复制 (⌘C)", "Copy (⌘C)")
         case .commandV: L10n.text("粘贴 (⌘V)", "Paste (⌘V)")
         case .commandZ: L10n.text("撤销 (⌘Z)", "Undo (⌘Z)")
+        case .openApp: L10n.text("打开指定 App", "Open an app")
         case .custom: L10n.text("录制任意按键…", "Record a key…")
         }
     }
@@ -244,6 +246,36 @@ struct RemoteCustomShortcut: Codable, Hashable {
     }
 }
 
+/// 「按这个键就切到某个 App」的目标。
+///
+/// 保存 bundle id 为主（应用挪了位置也能找到），路径作为兜底；
+/// 名称只用于界面显示，避免每次刷新都去查一次。
+struct RemoteAppMapping: Codable, Hashable {
+    let bundleID: String
+    let name: String
+    let path: String
+
+    /// 打开或切到这个 App。已经在运行时会被激活到前台。
+    func open() {
+        let workspace = NSWorkspace.shared
+        let url = workspace.urlForApplication(withBundleIdentifier: bundleID)
+            ?? (FileManager.default.fileExists(atPath: path)
+                ? URL(fileURLWithPath: path)
+                : nil)
+        guard let url else {
+            print("[MAPPING] ⚠️ 找不到 App：\(name)（\(bundleID)）")
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        workspace.openApplication(at: url, configuration: configuration) { _, error in
+            if let error {
+                print("[MAPPING] ⚠️ 打开 \(name) 失败：\(error.localizedDescription)")
+            }
+        }
+    }
+}
+
 final class RemoteMappingStore: ObservableObject {
     static let shared = RemoteMappingStore()
 
@@ -252,6 +284,7 @@ final class RemoteMappingStore: ObservableObject {
     private let prefix = "remoteMapping."
     private let enabledPrefix = "remoteMappingEnabled."
     private let customPrefix = "remoteCustomMapping."
+    private let appPrefix = "remoteAppMapping."
 
     private init() {}
 
@@ -320,7 +353,32 @@ final class RemoteMappingStore: ObservableObject {
            let shortcut = customShortcut(for: button, remote: remote) {
             return shortcut.label
         }
+        if value == .openApp {
+            return appMapping(for: button, remote: remote)?.name
+                ?? L10n.text("选择应用…", "Choose app…")
+        }
         return value.title
+    }
+
+    func appMapping(
+        for button: RemoteButtonDefinition,
+        remote: SupportedRemoteID
+    ) -> RemoteAppMapping? {
+        let key = appPrefix + remote.rawValue + "." + button.id
+        guard let data = defaults.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(RemoteAppMapping.self, from: data)
+    }
+
+    func setAppMapping(
+        _ mapping: RemoteAppMapping,
+        for button: RemoteButtonDefinition,
+        remote: SupportedRemoteID
+    ) {
+        let key = appPrefix + remote.rawValue + "." + button.id
+        if let data = try? JSONEncoder().encode(mapping) {
+            defaults.set(data, forKey: key)
+            setTarget(.openApp, for: button, remote: remote)
+        }
     }
 
     func post(
@@ -331,6 +389,11 @@ final class RemoteMappingStore: ObservableObject {
         let value = target(for: button, remote: remote)
         if value == .custom {
             customShortcut(for: button, remote: remote)?.post(isDown: isDown)
+        } else if value == .openApp {
+            // 只在按下时触发一次，避免按下/抬起各切一次。
+            if isDown {
+                appMapping(for: button, remote: remote)?.open()
+            }
         } else {
             value.post(isDown: isDown)
         }
@@ -343,6 +406,9 @@ final class RemoteMappingStore: ObservableObject {
             )
             defaults.removeObject(
                 forKey: customPrefix + remote.rawValue + "." + button.id
+            )
+            defaults.removeObject(
+                forKey: appPrefix + remote.rawValue + "." + button.id
             )
         }
         revision += 1
