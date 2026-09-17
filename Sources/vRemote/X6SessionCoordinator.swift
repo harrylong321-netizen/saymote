@@ -65,6 +65,9 @@ final class X6SessionCoordinator {
     private static let shortPressThreshold: TimeInterval = 0.15
     /// 开麦后等待音频出现的时长，超过即认为遥控器没有真正开麦。
     private static let audioArrivalTimeout: TimeInterval = 0.5
+    /// 短按收尾的等待时长（从开麦检测超时算起）。加上前面的 0.5 秒，
+    /// 总时长要超过 tapSettleWindow，读数才可信。
+    private static let shortPressRecoveryDelay: TimeInterval = 0.8
     private static let openConfirmationTimeout: TimeInterval = 1.0
     private static let closeVerificationTimeout: TimeInterval = 1.2
     private static let maximumOpenAttempts = 3
@@ -85,6 +88,7 @@ final class X6SessionCoordinator {
     /// 本次会话是否已经收到遥控器的音频采样。
     private var audioObservedThisSession = false
     private var audioArrivalCheck: DispatchWorkItem?
+    private var shortPressRecoveryWork: DispatchWorkItem?
 
     /// 遥控器没有真正开麦时置位，供菜单栏显示明确提示。
     private(set) var audioWarningText: String?
@@ -918,6 +922,8 @@ final class X6SessionCoordinator {
         openConfirmationWorkItem = nil
         audioArrivalCheck?.cancel()
         audioArrivalCheck = nil
+        shortPressRecoveryWork?.cancel()
+        shortPressRecoveryWork = nil
     }
 
     private func publish(_ status: String) {
@@ -967,6 +973,50 @@ final class X6SessionCoordinator {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.logDoubaoInputDevice(stage)
         }
+    }
+
+    /// 短按没有真正开麦之后的收尾。
+    ///
+    /// 遥控器固件不会为过短的按键启动麦克风，但 App 那一下触发键点击是发出去了的
+    /// ——豆包很可能已经打开、正在录静音。如果不处理，App 就会一直停在「麦克风
+    /// 已打开」的假状态，下一次按键会被当成关闭。
+    ///
+    /// 但**不能盲目再点一次**（0.5 秒内连点两次会被豆包忽略，反而制造错位，
+    /// 这是之前踩过的坑）：这里等读数稳定后再确认——只有确认豆包确实在录音，
+    /// 才补一次点击把它关掉；确认没在录就不点。之后把会话回到「已关闭」，
+    /// 让下一次按键重新回到「第一下 = 开始」。
+    private func scheduleShortPressRecovery(
+        expectedGeneration: UInt64,
+        text: String,
+        shortText: String
+    ) {
+        shortPressRecoveryWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.generation == expectedGeneration,
+                  self.phase == .open || self.phase == .opening
+            else { return }
+            guard let recording = self.trustedDoubaoRecording() else {
+                print("[VOICE-SESSION] 短按收尾：豆包状态仍不可采信，本次不处理")
+                return
+            }
+            if recording {
+                print("[VOICE-SESSION] 短按收尾：确认豆包在录音，补一次点击关闭它")
+                self.tapTrigger()
+            } else {
+                print("[VOICE-SESSION] 短按收尾：豆包并未在录音，无需点击")
+            }
+            self.finalizeClosed(reason: "short press recovery")
+            // finalizeClosed 会清掉提示，这里恢复，让用户仍能看到失败原因。
+            self.audioWarningText = text
+            self.audioWarningShortText = shortText
+            self.publish(text)
+        }
+        shortPressRecoveryWork = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.shortPressRecoveryDelay,
+            execute: work
+        )
     }
 
     /// 遥控器音频已经到达：清掉「没有开麦」的提示。
@@ -1021,6 +1071,13 @@ final class X6SessionCoordinator {
             )
             print("[VOICE-SESSION] ⚠️ \(text)")
             self.publish(text)
+            if tooShort {
+                self.scheduleShortPressRecovery(
+                    expectedGeneration: expectedGeneration,
+                    text: text,
+                    shortText: shortText
+                )
+            }
         }
         audioArrivalCheck = work
         DispatchQueue.main.asyncAfter(
