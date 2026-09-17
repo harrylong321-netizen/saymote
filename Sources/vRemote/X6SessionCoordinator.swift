@@ -92,6 +92,10 @@ final class X6SessionCoordinator {
     private(set) var audioWarningShortText: String?
     /// 每次出现新的告警就 +1，供外部判断「这是不是一条新提示」。
     private(set) var audioWarningSerial = 0
+    /// App 最近一次发出触发键点击的时间。豆包启动/停止需要时间（实测约
+    /// 0.8 秒），刚点完就重新读数会拿到过期值，所以要避开这个窗口。
+    private var lastTriggerTapAt: Date?
+    private static let tapSettleWindow: TimeInterval = 1.0
 
     private var routeCloseWorkItem: DispatchWorkItem?
     private var startVerificationWorkItem: DispatchWorkItem?
@@ -162,7 +166,9 @@ final class X6SessionCoordinator {
         }
 
         if supportsPhysicalHoldGesture, reason == 0x03 {
-            let recognitionWasOpen = phase == .open || snapshot.isRecording
+            // 「这一下该开还是该关」同样以豆包的真实状态为准；读数不可采信时
+            // 才退回 App 自己的阶段记录。
+            let recognitionWasOpen = trustedDoubaoRecording() ?? (phase == .open)
             if physicalVoiceGestures[remote] == nil {
                 physicalVoiceGestures[remote] = PhysicalVoiceGesture(
                     beganAt: now(),
@@ -373,16 +379,19 @@ final class X6SessionCoordinator {
     func triggerDownObserved(isSynthetic: Bool) {
         guard !isSynthetic else { return }
         let snapshot = doubaoState.snapshotNow()
+        let trustedRecording = trustedDoubaoRecording()
         let shouldOpen: Bool
-        switch phase {
-        case .closed:
-            shouldOpen = !snapshot.isRecording
-        case .closing:
+        if phase == .closing {
             // A second deliberate physical trigger reverses the user's last
             // intent even if CoreAudio has not published inactive yet.
             shouldOpen = true
-        case .opening, .open:
-            shouldOpen = false
+        } else if let recording = trustedRecording {
+            // 以豆包的真实状态为准：它在录，这一下就该关；它没在录，就该开。
+            // 这样即使 App 的阶段与豆包错位（例如豆包在 App 之外被开关过，
+            // 或短按失败后留下假状态），按键方向依然是对的。
+            shouldOpen = !recording
+        } else {
+            shouldOpen = !(phase == .open || phase == .opening)
         }
 
         print(
@@ -390,7 +399,8 @@ final class X6SessionCoordinator {
             (shouldOpen ? "open" : "close") +
             " phase=\(phase.rawValue) " +
             "doubaoBefore=\(snapshot.state.rawValue) " +
-            "device=\(snapshot.deviceSummary)"
+            "device=\(snapshot.deviceSummary) " +
+            "doubaoRecording=\(trustedRecording.map { $0 ? "yes" : "no" } ?? "unknown")"
         )
 
         if shouldOpen {
@@ -561,7 +571,7 @@ final class X6SessionCoordinator {
         activateRemoteRoute()
         logDoubaoInputDevice("tap-open-before")
         if sendTrigger {
-            triggerTap()
+            tapTrigger()
         }
         scheduleDoubaoProbe("tap-open-after-0.8s", after: 0.8)
         if requestTransportImmediately {
@@ -605,7 +615,7 @@ final class X6SessionCoordinator {
         openRequestedRemote = nil
         logDoubaoInputDevice("tap-close-before")
         if sendTrigger {
-            triggerTap()
+            tapTrigger()
         }
         scheduleDoubaoProbe("tap-close-after-0.8s", after: 0.8)
         scheduleRouteClose(after: 0.10)
@@ -908,6 +918,29 @@ final class X6SessionCoordinator {
     }
 
     // MARK: - Remote microphone health
+
+    /// 触发键点击的唯一出口：记录时间，供 `trustedDoubaoRecording()` 判断
+    /// 读数是否已经稳定。
+    private func tapTrigger() {
+        lastTriggerTapAt = now()
+        triggerTap()
+    }
+
+    /// 豆包是否正在录音。返回 nil 表示读数不可采信（绑定不到豆包进程，
+    /// 或者刚发过触发键、状态还没稳定）。
+    ///
+    /// macOS 14.2+ 用系统的 `isRunningInput`；这台 macOS 12 上没有该属性，
+    /// 改用「豆包进程正占着某个输入设备」来判断——本机实测：两次完整开关
+    /// 循环里，设备列表非空 ⟺ 豆包正在录音，读数零抖动。
+    private func trustedDoubaoRecording() -> Bool? {
+        if let last = lastTriggerTapAt,
+           now().timeIntervalSince(last) < Self.tapSettleWindow {
+            return nil
+        }
+        let snapshot = doubaoState.snapshotNow()
+        guard snapshot.processObjectID != nil else { return nil }
+        return snapshot.isRecording || snapshot.hasInputDevice
+    }
 
     /// 诊断（第一步，只读不写）：记录豆包当前占用的输入设备，用来验证
     /// 「设备列表非空 = 豆包正在录音」「列表内容 = 豆包用的是哪个麦克风」
