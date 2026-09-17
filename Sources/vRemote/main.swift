@@ -39,6 +39,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var remoteStreaming = false
 
     private var lastVoiceRemote: VoiceRemoteID?
+    /// 已经弹过提示的告警序号，避免同一告警重复弹浮层。
+    private var lastShownWarningSerial = 0
 
     private let x6 = X6HIDBridge()
     private let chromecastHID = ChromecastRemoteHIDBridge()
@@ -437,7 +439,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         statusItem.button?.toolTip = "vRemoter · \(statusText)"
         headerLabel.title = L10n.text("状态 · \(statusText)", "Status · \(statusText)")
-        applyStatusWarning(x6Session.audioWarningShortText)
+        presentToastIfNeeded()
         debugWindow.update(
             status: statusText,
             hidConnected: anyHID,
@@ -453,31 +455,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
     }
 
-    /// 菜单栏图标平时是 App 图标（无文字）。出现「遥控器未开麦」这类告警时，
-    /// 换成警告图标 + 短文字——否则提示藏在菜单里，用户根本看不到。
-    private func applyStatusWarning(_ shortText: String?) {
-        guard let button = statusItem.button else { return }
-        if let shortText {
-            let title = " " + shortText
-            guard button.title != title else { return }
-            let image = NSImage(
-                systemSymbolName: "exclamationmark.triangle.fill",
-                accessibilityDescription: shortText
-            )
-            image?.size = NSSize(width: 15, height: 15)
-            button.image = image
-            button.imagePosition = .imageLeft
-            button.title = title
-            button.contentTintColor = .systemOrange
-        } else {
-            guard !button.title.isEmpty else { return }
-            let statusImage = LogoAsset.image.copy() as? NSImage
-            statusImage?.size = NSSize(width: 18, height: 18)
-            button.image = statusImage
-            button.imagePosition = .imageOnly
-            button.title = ""
-            button.contentTintColor = nil
-        }
+    /// 「遥控器未开麦」这类告警用屏幕下方的浮层提示——菜单栏在窗口多的时候
+    /// 根本看不见。用序号判断是不是一条新告警，避免重复弹出。
+    private func presentToastIfNeeded() {
+        let serial = x6Session.audioWarningSerial
+        guard serial != lastShownWarningSerial else { return }
+        lastShownWarningSerial = serial
+        guard let text = x6Session.audioWarningText else { return }
+        ToastPresenter.shared.show(text)
     }
 
     private func wireDebugWindow() {

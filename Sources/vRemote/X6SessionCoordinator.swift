@@ -90,6 +90,8 @@ final class X6SessionCoordinator {
     private(set) var audioWarningText: String?
     /// 菜单栏图标旁边显示的短提示（菜单栏空间有限）。
     private(set) var audioWarningShortText: String?
+    /// 每次出现新的告警就 +1，供外部判断「这是不是一条新提示」。
+    private(set) var audioWarningSerial = 0
 
     private var routeCloseWorkItem: DispatchWorkItem?
     private var startVerificationWorkItem: DispatchWorkItem?
@@ -940,6 +942,7 @@ final class X6SessionCoordinator {
                 : L10n.text("遥控器无音频", "No remote audio")
             self.audioWarningText = text
             self.audioWarningShortText = shortText
+            self.audioWarningSerial += 1
             print(
                 String(
                     format:
