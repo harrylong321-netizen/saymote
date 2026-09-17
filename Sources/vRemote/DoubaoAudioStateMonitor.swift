@@ -24,6 +24,11 @@ final class DoubaoAudioStateMonitor {
 
         var isRecording: Bool { state == .active }
 
+        /// 豆包当前是否占着某个输入设备。`kAudioProcessPropertyDevices`
+        /// 在 macOS 12/13 上也可用，而 `isRecording` 依赖 14.2 才有的 API，
+        /// 所以旧系统上判断「豆包在不在录音」要看这个。
+        var hasInputDevice: Bool { !inputDeviceIDs.isEmpty }
+
         var deviceSummary: String {
             inputDeviceNames.isEmpty
                 ? "无"
@@ -206,6 +211,17 @@ final class DoubaoAudioStateMonitor {
             )
         }
 
+        // 设备列表独立查询：`kAudioProcessPropertyIsRunningInput` 是 macOS
+        // 14.2 才公开的，旧系统上一定失败；而 `kAudioProcessPropertyDevices`
+        // 在 macOS 12 上也能用，所以即使拿不到「是否在录音」，也拿得到
+        // 「豆包正在占用哪个输入设备」。
+        let deviceIDs = Self.objectListProperty(
+            object: processObjectID,
+            selector: CoreAudioProcessCompat.devices,
+            scope: kAudioObjectPropertyScopeInput
+        )
+        let names = deviceIDs.map(Self.deviceName)
+
         guard let running = Self.uint32Property(
             object: processObjectID,
             selector: CoreAudioProcessCompat.isRunningInput,
@@ -215,17 +231,11 @@ final class DoubaoAudioStateMonitor {
                 state: .unavailable,
                 pid: processPID,
                 processObjectID: processObjectID,
-                inputDeviceIDs: [],
-                inputDeviceNames: []
+                inputDeviceIDs: deviceIDs,
+                inputDeviceNames: names
             )
         }
 
-        let deviceIDs = Self.objectListProperty(
-            object: processObjectID,
-            selector: CoreAudioProcessCompat.devices,
-            scope: kAudioObjectPropertyScopeInput
-        )
-        let names = deviceIDs.map(Self.deviceName)
         return Snapshot(
             state: running == 0 ? .inactive : .active,
             pid: processPID,
@@ -311,7 +321,9 @@ final class DoubaoAudioStateMonitor {
             &size,
             &values
         ) == noErr else { return [] }
-        return values
+        // 停止录音的瞬间列表里会短暂出现 kAudioObjectUnknown（ID 0），
+        // 它不是真实设备，留着会被误判成「豆包在用某个未知设备」。
+        return values.filter { $0 != kAudioObjectUnknown }
     }
 
     private static func deviceName(_ deviceID: AudioDeviceID) -> String {

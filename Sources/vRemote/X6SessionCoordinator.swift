@@ -559,9 +559,11 @@ final class X6SessionCoordinator {
         self.owner = owner
         sessionRemote = remote
         activateRemoteRoute()
+        logDoubaoInputDevice("tap-open-before")
         if sendTrigger {
             triggerTap()
         }
+        scheduleDoubaoProbe("tap-open-after-0.8s", after: 0.8)
         if requestTransportImmediately {
             requestRemoteTransportOpen(
                 remote,
@@ -601,9 +603,11 @@ final class X6SessionCoordinator {
         phase = .closing
         owner = .none
         openRequestedRemote = nil
+        logDoubaoInputDevice("tap-close-before")
         if sendTrigger {
             triggerTap()
         }
+        scheduleDoubaoProbe("tap-close-after-0.8s", after: 0.8)
         scheduleRouteClose(after: 0.10)
         scheduleCloseVerification(for: generation)
         publish("遥控器已结束 · 正在关闭豆包")
@@ -904,6 +908,26 @@ final class X6SessionCoordinator {
     }
 
     // MARK: - Remote microphone health
+
+    /// 诊断（第一步，只读不写）：记录豆包当前占用的输入设备，用来验证
+    /// 「设备列表非空 = 豆包正在录音」「列表内容 = 豆包用的是哪个麦克风」
+    /// 这两条推断在你这台机器上是否稳定。不参与任何决策。
+    func logDoubaoInputDevice(_ stage: String) {
+        let snapshot = doubaoState.snapshotNow()
+        let devices = snapshot.inputDeviceNames.isEmpty
+            ? "（无）"
+            : snapshot.inputDeviceNames.joined(separator: "、")
+        print(
+            "[DOUBAO-PROBE] \(stage) recording=\(snapshot.hasInputDevice ? "yes" : "no") " +
+            "devices=\(devices) vRemote=\(snapshot.inputDeviceNames.contains("vRemoteDr 2ch") ? "yes" : "no")"
+        )
+    }
+
+    private func scheduleDoubaoProbe(_ stage: String, after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.logDoubaoInputDevice(stage)
+        }
+    }
 
     /// 遥控器音频已经到达：清掉「没有开麦」的提示。
     func remoteAudioObserved() {
