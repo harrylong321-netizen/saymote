@@ -613,9 +613,16 @@ final class X6SessionCoordinator {
         phase = .closing
         owner = .none
         openRequestedRemote = nil
+        // 触发键只在「豆包确实在录音」时才需要点。豆包本来就没在录时再点一下，
+        // 反而会把它打开、制造状态错位（实测抓到过一次）。读数不可采信时保持
+        // 原有行为。
+        let trustedRecording = trustedDoubaoRecording()
         logDoubaoInputDevice("tap-close-before")
-        if sendTrigger {
+        let shouldTapTrigger = sendTrigger && (trustedRecording ?? true)
+        if shouldTapTrigger {
             tapTrigger()
+        } else if sendTrigger, trustedRecording == false {
+            print("[VOICE-SESSION] 豆包并未在录音，跳过这次的触发键点击")
         }
         scheduleDoubaoProbe("tap-close-after-0.8s", after: 0.8)
         scheduleRouteClose(after: 0.10)
