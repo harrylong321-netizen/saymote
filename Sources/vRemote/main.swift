@@ -437,6 +437,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         statusItem.button?.toolTip = "vRemoter · \(statusText)"
         headerLabel.title = L10n.text("状态 · \(statusText)", "Status · \(statusText)")
+        applyStatusWarning(x6Session.audioWarningShortText)
         debugWindow.update(
             status: statusText,
             hidConnected: anyHID,
@@ -450,6 +451,33 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             chromecastConnected: chromecastHIDConnected || chromecastBLEConnected,
             remoteLevelDB: nil
         )
+    }
+
+    /// 菜单栏图标平时是 App 图标（无文字）。出现「遥控器未开麦」这类告警时，
+    /// 换成警告图标 + 短文字——否则提示藏在菜单里，用户根本看不到。
+    private func applyStatusWarning(_ shortText: String?) {
+        guard let button = statusItem.button else { return }
+        if let shortText {
+            let title = " " + shortText
+            guard button.title != title else { return }
+            let image = NSImage(
+                systemSymbolName: "exclamationmark.triangle.fill",
+                accessibilityDescription: shortText
+            )
+            image?.size = NSSize(width: 15, height: 15)
+            button.image = image
+            button.imagePosition = .imageLeft
+            button.title = title
+            button.contentTintColor = .systemOrange
+        } else {
+            guard !button.title.isEmpty else { return }
+            let statusImage = LogoAsset.image.copy() as? NSImage
+            statusImage?.size = NSSize(width: 18, height: 18)
+            button.image = statusImage
+            button.imagePosition = .imageOnly
+            button.title = ""
+            button.contentTintColor = nil
+        }
     }
 
     private func wireDebugWindow() {

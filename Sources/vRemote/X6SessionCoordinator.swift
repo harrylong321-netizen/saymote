@@ -88,6 +88,8 @@ final class X6SessionCoordinator {
 
     /// 遥控器没有真正开麦时置位，供菜单栏显示明确提示。
     private(set) var audioWarningText: String?
+    /// 菜单栏图标旁边显示的短提示（菜单栏空间有限）。
+    private(set) var audioWarningShortText: String?
 
     private var routeCloseWorkItem: DispatchWorkItem?
     private var startVerificationWorkItem: DispatchWorkItem?
@@ -911,21 +913,33 @@ final class X6SessionCoordinator {
 
     private func clearAudioWarning() {
         audioWarningText = nil
+        audioWarningShortText = nil
     }
 
-    /// 开麦指令发出后等待音频。超时未收到音频时给出明确提示——短按是
-    /// 已知的最常见原因，遥控器固件会确认指令但不产生任何采样。
+    /// 开麦指令发出后等待音频。超时未收到音频时：
+    /// 1. 短按（< 0.15s）是已知的硬件限制——遥控器固件会确认指令但一个采样
+    ///    都不产生。此时把这次「开启」整体撤销掉（补一次触发键 + 回到已关闭），
+    ///    否则 App 会一直停在「麦克风已开」的假状态，下一次按键还会被当成关闭。
+    /// 2. 无论哪种情况，都把原因写进日志并在菜单栏显示出来。
     private func scheduleAudioArrivalCheck(pressDuration: TimeInterval) {
         audioArrivalCheck?.cancel()
+        let expectedGeneration = generation
         let work = DispatchWorkItem { [weak self] in
-            guard let self, !self.audioObservedThisSession else { return }
+            guard let self,
+                  self.generation == expectedGeneration,
+                  !self.audioObservedThisSession
+            else { return }
             let tooShort = pressDuration < Self.shortPressThreshold
             let text = tooShort
                 ? L10n.text("按键太短 · 遥控器未开麦（请按住 0.2 秒）",
                             "Press too short · Remote mic stayed off (hold 0.2s)")
                 : L10n.text("遥控器未送出音频",
                             "Remote sent no audio")
+            let shortText = tooShort
+                ? L10n.text("按键太短 · 按住 0.2 秒", "Too short · hold 0.2s")
+                : L10n.text("遥控器无音频", "No remote audio")
             self.audioWarningText = text
+            self.audioWarningShortText = shortText
             print(
                 String(
                     format:
@@ -936,6 +950,15 @@ final class X6SessionCoordinator {
                 )
             )
             print("[VOICE-SESSION] ⚠️ \(text)")
+            if tooShort {
+                print(
+                    "[VOICE-SESSION] ⚠️ 短按未开麦：撤销本次开启，回到已关闭状态"
+                )
+                self.triggerTap()
+                self.finalizeClosed(reason: "short press without remote audio")
+                self.audioWarningText = text
+                self.audioWarningShortText = shortText
+            }
             self.publish(text)
         }
         audioArrivalCheck = work
