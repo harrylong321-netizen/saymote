@@ -918,11 +918,14 @@ final class X6SessionCoordinator {
         audioWarningShortText = nil
     }
 
-    /// 开麦指令发出后等待音频。超时未收到音频时：
-    /// 1. 短按（< 0.15s）是已知的硬件限制——遥控器固件会确认指令但一个采样
-    ///    都不产生。此时把这次「开启」整体撤销掉（补一次触发键 + 回到已关闭），
-    ///    否则 App 会一直停在「麦克风已开」的假状态，下一次按键还会被当成关闭。
-    /// 2. 无论哪种情况，都把原因写进日志并在菜单栏显示出来。
+    /// 开麦指令发出后等待音频。超时未收到音频时给出明确提示并在日志里
+    /// 记录原因——短按（< 0.15s）是已知的硬件限制：遥控器固件会确认指令
+    /// 但一个采样都不产生。
+    ///
+    /// 注意：这里**不再**补发触发键去「撤销」。曾经这么做过，结果是 0.5 秒内
+    /// 连点两次触发键，豆包在启动过程中会忽略第二次，于是豆包停在「开」而
+    /// App 以为「关」，用户再按一次反而把豆包关掉——语音彻底录不进去。
+    /// 在拿不到豆包真实状态之前，不做这种盲目的二次点击。
     private func scheduleAudioArrivalCheck(pressDuration: TimeInterval) {
         audioArrivalCheck?.cancel()
         let expectedGeneration = generation
@@ -953,15 +956,6 @@ final class X6SessionCoordinator {
                 )
             )
             print("[VOICE-SESSION] ⚠️ \(text)")
-            if tooShort {
-                print(
-                    "[VOICE-SESSION] ⚠️ 短按未开麦：撤销本次开启，回到已关闭状态"
-                )
-                self.triggerTap()
-                self.finalizeClosed(reason: "short press without remote audio")
-                self.audioWarningText = text
-                self.audioWarningShortText = shortText
-            }
             self.publish(text)
         }
         audioArrivalCheck = work
