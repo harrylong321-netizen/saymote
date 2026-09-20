@@ -124,6 +124,7 @@ enum VoiceSessionSelfTest {
     static func run() -> Bool {
         let checks = CheckContext()
         testUnavailableDoubaoClosesSession(checks)
+        testUnavailableDoubaoStoppingClosesSession(checks)
         testActiveBeforeRelease(checks)
         testStopBeforeActive(checks)
         testSecondTapCloses(checks)
@@ -149,6 +150,37 @@ enum VoiceSessionSelfTest {
         c.expect(
             h.coordinator.debugSnapshot.phase == "open",
             "unavailable: session stays open because state cannot be verified"
+        )
+    }
+
+    /// 录音中豆包自己收尾（切走窗口 / 输入框消失）时，设备列表会变空。
+    /// macOS 12 上这是唯一能用的信号，收到之后必须把遥控器麦克风也关掉，
+    /// 不能一直抱着不放。
+    private static func testUnavailableDoubaoStoppingClosesSession(
+        _ c: CheckContext
+    ) {
+        let h = Harness(initialState: .unavailable)
+        h.coordinator.triggerDownObserved(isSynthetic: false)
+        RunLoop.current.run(until: Date().addingTimeInterval(1.1))
+        c.expect(
+            h.coordinator.debugSnapshot.phase == "open",
+            "doubao self-stop: 开麦后先处于已打开"
+        )
+        // 避开「刚点过触发键」的 1 秒settle窗口，再让设备列表变空。
+        h.advance(1.2)
+        h.doubao.emit(.unavailable)
+        RunLoop.current.run(until: Date().addingTimeInterval(1.3))
+        c.expect(
+            h.coordinator.debugSnapshot.phase == "closed",
+            "doubao self-stop: 豆包自己停录后会话自动收尾"
+        )
+        c.expect(
+            h.closeRequestCount >= 1,
+            "doubao self-stop: 自动收尾要求关闭遥控器麦克风"
+        )
+        c.expect(
+            h.routeChanges.last == false,
+            "doubao self-stop: 自动收尾后音频通路已关"
         )
     }
 

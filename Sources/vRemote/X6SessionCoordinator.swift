@@ -89,6 +89,7 @@ final class X6SessionCoordinator {
     private var audioObservedThisSession = false
     private var audioArrivalCheck: DispatchWorkItem?
     private var shortPressRecoveryWork: DispatchWorkItem?
+    private var doubaoStoppedWorkItem: DispatchWorkItem?
 
     /// 遥控器没有真正开麦时置位，供菜单栏显示明确提示。
     private(set) var audioWarningText: String?
@@ -100,6 +101,9 @@ final class X6SessionCoordinator {
     /// 0.8 秒），刚点完就重新读数会拿到过期值，所以要避开这个窗口。
     private var lastTriggerTapAt: Date?
     private static let tapSettleWindow: TimeInterval = 1.0
+    /// 读到「豆包不再占着输入设备」之后，等这么久再确认一次才收尾。
+    /// 用来滤掉豆包开关过程中的瞬时空档。
+    private static let doubaoStoppedConfirmDelay: TimeInterval = 1.0
 
     private var routeCloseWorkItem: DispatchWorkItem?
     private var startVerificationWorkItem: DispatchWorkItem?
@@ -518,8 +522,23 @@ final class X6SessionCoordinator {
             // unavailable。此时若按“未录音”处理，会在用户刚开始说话时
             // 就把会话关掉，故保持已打开的会话，交给用户手势关闭。
             //
+            // 但「保持打开」不能变成「永远打开」：豆包自己结束录音时
+            // （典型场景：录音中把焦点切到别的窗口，输入框消失，豆包自动
+            // 收尾）也必须把遥控器麦克风关掉。旧系统上唯一可用的信号是
+            // 设备列表：豆包不再占着任何输入设备 = 它自己停了。读数要可信
+            // （刚发过触发键的 1 秒内不采信）才据此收尾，并且先等一小段
+            // 时间复核一次，避免把豆包开关过程中的瞬时空档当成结束。
             if phase == .open {
-                publish("豆包录音中 · 无法校验")
+                switch trustedDoubaoRecording() {
+                case .some(false):
+                    scheduleDoubaoStoppedConfirmation()
+                    publish("豆包已停止 · 正在关闭遥控器麦克风")
+                case .some(true):
+                    cancelDoubaoStoppedConfirmation()
+                    publish("豆包录音中 · 无法校验")
+                case .none:
+                    publish("豆包录音中 · 无法校验")
+                }
                 break
             }
             if phase != .opening {
@@ -668,6 +687,40 @@ final class X6SessionCoordinator {
         physicalVoiceGestures.removeAll()
         closeRouteAndTransports()
         print("[VOICE-SESSION] closed reason=\(reason)")
+    }
+
+    /// 豆包不再占着输入设备 → 复核一次再收尾。确认时它又占上了就作废这次收尾
+    /// （例如刚才是豆包开关过程中的短暂空档）。
+    private func scheduleDoubaoStoppedConfirmation() {
+        guard doubaoStoppedWorkItem == nil else { return }
+        let expectedGeneration = generation
+        let work = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.generation == expectedGeneration,
+                  self.phase == .open
+            else { return }
+            self.doubaoStoppedWorkItem = nil
+            guard self.trustedDoubaoRecording() == false else {
+                print("[VOICE-SESSION] 豆包又占上了输入设备，取消这次的自动收尾")
+                return
+            }
+            print(
+                "[VOICE-SESSION] 豆包自己结束了录音" +
+                "（切走窗口 / 输入框消失）→ 关闭遥控器麦克风"
+            )
+            self.finalizeClosed(reason: "Doubao stopped by itself")
+            self.publish("豆包已停止 · 遥控器麦克风已关闭")
+        }
+        doubaoStoppedWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.doubaoStoppedConfirmDelay,
+            execute: work
+        )
+    }
+
+    private func cancelDoubaoStoppedConfirmation() {
+        doubaoStoppedWorkItem?.cancel()
+        doubaoStoppedWorkItem = nil
     }
 
     // MARK: - Remote transport requests
@@ -943,6 +996,8 @@ final class X6SessionCoordinator {
         audioArrivalCheck = nil
         shortPressRecoveryWork?.cancel()
         shortPressRecoveryWork = nil
+        doubaoStoppedWorkItem?.cancel()
+        doubaoStoppedWorkItem = nil
     }
 
     private func publish(_ status: String) {
