@@ -431,10 +431,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let anyBLE = x6BLEConnected || chromecastBLEConnected
         let doubaoSnapshot = doubaoAudioState.snapshotNow()
         let doubaoUsesVRemote = doubaoSnapshot.inputDeviceNames.contains("vRemoteDr 2ch")
+        // macOS 12/13 上 snapshot.isRecording 恒为 false——判断是否在录音的
+        // kAudioProcessPropertyIsRunningInput 是 14.2 才公开的 API，旧系统上
+        // 一定读不到。旧系统只能看设备列表：豆包占着输入设备就等于它在录音
+        // （详见 work/改动总览.md 坑 4）。会话逻辑一直用的是这个口径，UI 之前
+        // 漏了，所以那一行在 macOS 12 上永远是「当前未录音」。
+        let doubaoIsRecording = doubaoSnapshot.isRecording
+            || doubaoSnapshot.hasInputDevice
         let statusText: String
         if let warning = x6Session.audioWarningText {
             statusText = warning
-        } else if doubaoSnapshot.isRecording && !doubaoUsesVRemote {
+        } else if doubaoIsRecording && !doubaoUsesVRemote {
             statusText = L10n.text("豆包输入设备错误", "Incorrect Doubao input")
         } else if remoteStreaming {
             statusText = L10n.text("遥控器录音中", "Remote recording")
@@ -454,7 +461,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             bleConnected: anyBLE,
             remoteStreaming: remoteStreaming,
             remoteInputEnabled: AudioPipe.shared.isRemoteInputEnabled,
-            doubaoIsRecording: doubaoSnapshot.isRecording,
+            doubaoIsRecording: doubaoIsRecording,
             doubaoInput: doubaoSnapshot.deviceSummary,
             driverAvailable: AudioPipe.shared.isOutputDeviceAvailable,
             x6Connected: x6HIDConnected || x6BLEConnected,
