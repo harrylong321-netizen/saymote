@@ -368,14 +368,10 @@ enum MappingLayoutSelfTest {
                 }.joined(separator: ", ")
             }
             let lines = layout.lines.map { line in
-                String(
-                    format: "{\"id\": \"%@\", \"x1\": %.1f, \"y1\": %.1f, \"x2\": %.1f, \"y2\": %.1f}",
-                    line.buttonID,
-                    line.start.x,
-                    line.start.y,
-                    line.end.x,
-                    line.end.y
-                )
+                let points = line.points.map {
+                    String(format: "[%.1f, %.1f]", $0.x, $0.y)
+                }.joined(separator: ", ")
+                return "{\"id\": \"\(line.buttonID)\", \"points\": [\(points)]}"
             }.joined(separator: ", ")
             let json = """
             {"remote": "\(remote.rawValue)", "width": \
@@ -415,11 +411,23 @@ enum MappingLayoutSelfTest {
                     func side(_ p: CGPoint, _ q: CGPoint, _ r: CGPoint) -> CGFloat {
                         (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)
                     }
-                    let d1 = side(b.start, b.end, a.start)
-                    let d2 = side(b.start, b.end, a.end)
-                    let d3 = side(a.start, a.end, b.start)
-                    let d4 = side(a.start, a.end, b.end)
-                    if ((d1 > 0) != (d2 > 0)), ((d3 > 0) != (d4 > 0)) {
+                    var crossed = false
+                    for ai in 0..<(a.points.count - 1) {
+                        for bi in 0..<(b.points.count - 1) {
+                            let a1 = a.points[ai]
+                            let a2 = a.points[ai + 1]
+                            let b1 = b.points[bi]
+                            let b2 = b.points[bi + 1]
+                            let d1 = side(b1, b2, a1)
+                            let d2 = side(b1, b2, a2)
+                            let d3 = side(a1, a2, b1)
+                            let d4 = side(a1, a2, b2)
+                            if ((d1 > 0) != (d2 > 0)), ((d3 > 0) != (d4 > 0)) {
+                                crossed = true
+                            }
+                        }
+                    }
+                    if crossed {
                         crossings += 1
                         emit("[MAPPING-TEST] ⚠️ \(name) 连线相交：\(a.buttonID) × \(b.buttonID)")
                     }

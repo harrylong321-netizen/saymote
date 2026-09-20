@@ -451,8 +451,10 @@ enum RemoteAnchors {
         "voice": CGPoint(x: 0.694, y: 0.349), // 语音（深色键 + 四色点）
         "08": CGPoint(x: 0.689, y: 0.471),    // 静音
         "0F": CGPoint(x: 0.694, y: 0.594),    // Netflix（OCR 读出文字）
-        "0C": CGPoint(x: 0.712, y: 0.715),    // 音量＋
-        "0D": CGPoint(x: 0.287, y: 0.715)     // 音量－
+        // 音量加减在右侧面（正面图只看得到摇杆的凸起，y 0.20–0.33），
+        // 上＋下−，x 取凸起所在的 0.922。
+        "0C": CGPoint(x: 0.922, y: 0.232),    // 音量＋
+        "0D": CGPoint(x: 0.922, y: 0.298)     // 音量－
         // 01 电源、11 信源：这张正面图上没有这两个键
     ]
 
@@ -504,8 +506,9 @@ enum RemoteMappingLayout {
 
     struct Line {
         let buttonID: String
-        let start: CGPoint
-        let end: CGPoint
+        /// 折线：行边缘 → 拐点 → 按键。前一段是斜线、后一段是横线
+        /// （必要时末尾还有一小段接到圆点的短竖线）。
+        let points: [CGPoint]
         let active: Bool
     }
 
@@ -542,6 +545,17 @@ enum RemoteMappingLayout {
     private static var assignmentCache: [SupportedRemoteID: [String: Bool]] = [:]
     private static let cacheLock = NSLock()
 
+    /// 斜线离行边缘多远开始拐成横线；横线之间至少留开的间隔。
+    private static let bendOffset: CGFloat = 26
+    private static let minHorizontalLength: CGFloat = 12
+    private static let minHorizontalSpacing: CGFloat = 8
+
+    private struct Placement {
+        let left: [(button: RemoteButtonDefinition, anchor: CGPoint?, centerY: CGFloat)]
+        let right: [(button: RemoteButtonDefinition, anchor: CGPoint?, centerY: CGFloat)]
+        let polylines: [(buttonID: String, points: [CGPoint])]
+    }
+
     /// `imageAspect` = 图宽 / 图高；只有它影响线段几何。
     static func layout(
         remote: SupportedRemoteID,
@@ -566,54 +580,27 @@ enum RemoteMappingLayout {
             unanchoredCount: unanchored.count,
             imageAspect: imageAspect
         )
-
-        var columns: [Bool: [(RemoteButtonDefinition, CGPoint?)]] = [true: [], false: []]
-        for (button, anchor) in anchored {
-            columns[assignment[button.id] ?? false, default: []]
-                .append((button, anchor))
+        let placement = place(
+            assignment: assignment,
+            anchored: anchored,
+            unanchored: unanchored,
+            geometry: geometry
+        )
+        let leftRows = placement.left.map {
+            Row(button: $0.button, anchor: $0.anchor, centerY: $0.centerY)
         }
-        let shorter: Bool = columns[true]!.count <= columns[false]!.count
-        columns[shorter]?.append(contentsOf: unanchored.map { ($0, nil) })
-
-        func rows(for isLeft: Bool) -> [Row] {
-            (columns[isLeft] ?? [])
-                .sorted { lhs, rhs in
-                    switch (lhs.1, rhs.1) {
-                    case let (l?, r?): r.y == l.y ? l.x < r.x : l.y < r.y
-                    case (nil, _): false
-                    case (_, nil): true
-                    }
-                }
-                .enumerated()
-                .map { index, entry in
-                    Row(
-                        button: entry.0,
-                        anchor: entry.1,
-                        centerY: topInset
-                            + CGFloat(index) * (rowHeight + rowGap)
-                            + rowHeight / 2
-                    )
-                }
+        let rightRows = placement.right.map {
+            Row(button: $0.button, anchor: $0.anchor, centerY: $0.centerY)
         }
-
-        let leftRows = rows(for: true)
-        let rightRows = rows(for: false)
-        var lines: [Line] = []
-        for (rowList, edge) in [(leftRows, geometry.leftEdge), (rightRows, geometry.rightEdge)] {
-            for row in rowList {
-                guard let anchor = row.anchor else { continue }
-                lines.append(
-                    Line(
-                        buttonID: row.button.id,
-                        start: CGPoint(x: edge, y: row.centerY),
-                        end: CGPoint(
-                            x: geometry.imageOriginX + anchor.x * geometry.imageWidth,
-                            y: anchor.y * imageHeight
-                        ),
-                        active: isActive(row.button)
-                    )
-                )
-            }
+        let buttonByID = Dictionary(
+            uniqueKeysWithValues: RemoteProfiles.buttons(for: remote).map { ($0.id, $0) }
+        )
+        let lines = placement.polylines.map { entry in
+            Line(
+                buttonID: entry.buttonID,
+                points: entry.points,
+                active: buttonByID[entry.buttonID].map(isActive) ?? true
+            )
         }
         return Layout(
             left: leftRows,
@@ -625,6 +612,86 @@ enum RemoteMappingLayout {
     }
 
     // MARK: - 分栏求解
+
+    /// 给定分栏，算出两栏的行位置和每条连线折线（斜线 + 横线）。
+    ///
+    /// 横线落在按键的 y 上；同一栏里两条横线如果离得太近（例如方向盘上的
+    /// 「确认」和「方向右」在同一高度），就把后一条往下让开一点，末尾再用
+    /// 一小段竖线接回圆点，保证横线之间不重叠。
+    private static func place(
+        assignment: [String: Bool],
+        anchored: [(RemoteButtonDefinition, CGPoint)],
+        unanchored: [RemoteButtonDefinition],
+        geometry: Geometry
+    ) -> Placement {
+        var columns: [Bool: [(RemoteButtonDefinition, CGPoint?)]] = [true: [], false: []]
+        for (button, anchor) in anchored {
+            columns[assignment[button.id] ?? false, default: []]
+                .append((button, anchor))
+        }
+        let shorter: Bool = columns[true]!.count <= columns[false]!.count
+        columns[shorter]?.append(contentsOf: unanchored.map { ($0, nil) })
+
+        func placed(isLeft: Bool) -> [(button: RemoteButtonDefinition, anchor: CGPoint?, centerY: CGFloat)] {
+            (columns[isLeft] ?? [])
+                .sorted { lhs, rhs in
+                    switch (lhs.1, rhs.1) {
+                    case let (l?, r?): r.y == l.y ? l.x < r.x : l.y < r.y
+                    case (nil, _): false
+                    case (_, nil): true
+                    }
+                }
+                .enumerated()
+                .map { index, entry in
+                    (
+                        button: entry.0,
+                        anchor: entry.1,
+                        centerY: topInset
+                            + CGFloat(index) * (rowHeight + rowGap)
+                            + rowHeight / 2
+                    )
+                }
+        }
+
+        let leftRows = placed(isLeft: true)
+        let rightRows = placed(isLeft: false)
+        var polylines: [(buttonID: String, points: [CGPoint])] = []
+        for (rows, edge) in [
+            (leftRows, geometry.leftEdge),
+            (rightRows, geometry.rightEdge)
+        ] {
+            // 横线用的 y：按按键 y 排好，靠得太近的往下让开。
+            var previousHorizontalY: CGFloat = -.greatestFiniteMagnitude
+            for row in rows {
+                guard let anchor = row.anchor else { continue }
+                let anchorX = geometry.imageOriginX + anchor.x * geometry.imageWidth
+                let anchorY = anchor.y * imageHeight
+                var horizontalY = anchorY
+                if horizontalY - previousHorizontalY < minHorizontalSpacing {
+                    horizontalY = previousHorizontalY + minHorizontalSpacing
+                }
+                previousHorizontalY = horizontalY
+                // 拐点：斜线从行边缘出发，走 bendOffset 之后拐成横线；
+                // 离图太近的按键就少拐一点，保证横线至少 12pt 看得见。
+                let bendX: CGFloat
+                if edge < geometry.imageOriginX {
+                    bendX = min(anchorX - minHorizontalLength, edge + bendOffset)
+                } else {
+                    bendX = max(anchorX + minHorizontalLength, edge - bendOffset)
+                }
+                var points = [
+                    CGPoint(x: edge, y: row.centerY),
+                    CGPoint(x: bendX, y: horizontalY),
+                    CGPoint(x: anchorX, y: horizontalY)
+                ]
+                if abs(horizontalY - anchorY) > 0.5 {
+                    points.append(CGPoint(x: anchorX, y: anchorY))
+                }
+                polylines.append((buttonID: row.button.id, points: points))
+            }
+        }
+        return Placement(left: leftRows, right: rightRows, polylines: polylines)
+    }
 
     private static func cachedAssignment(
         remote: SupportedRemoteID,
@@ -714,29 +781,23 @@ enum RemoteMappingLayout {
         imageAspect: CGFloat
     ) -> Metrics {
         let geometry = geometry(width: referenceWidth, imageAspect: imageAspect)
-        var columns: [Bool: [CGPoint]] = [true: [], false: []]
-        for (button, anchor) in anchored {
-            columns[assignment[button.id] ?? false, default: []].append(anchor)
-        }
-        let shorter: Bool = columns[true]!.count <= columns[false]!.count
-        let leftCount = columns[true]!.count + (shorter ? unanchoredCount : 0)
-        let rightCount = columns[false]!.count + (shorter ? 0 : unanchoredCount)
-
+        let placement = place(
+            assignment: assignment,
+            anchored: anchored,
+            // 无锚点的行接在栏末尾，不影响锚点行的 y，所以这里空着算即可。
+            unanchored: [],
+            geometry: geometry
+        )
+        let leftCount = placement.left.count
+            + (placement.left.count <= placement.right.count ? unanchoredCount : 0)
+        let rightCount = placement.right.count
+            + (placement.left.count <= placement.right.count ? 0 : unanchoredCount)
         var segments: [(CGPoint, CGPoint)] = []
         var totalLength = 0.0
-        for (isLeft, edge) in [(true, geometry.leftEdge), (false, geometry.rightEdge)] {
-            let anchors = (columns[isLeft] ?? []).sorted {
-                $0.y == $1.y ? $0.x < $1.x : $0.y < $1.y
-            }
-            for (index, anchor) in anchors.enumerated() {
-                let start = CGPoint(
-                    x: edge,
-                    y: topInset + CGFloat(index) * (rowHeight + rowGap) + rowHeight / 2
-                )
-                let end = CGPoint(
-                    x: geometry.imageOriginX + anchor.x * geometry.imageWidth,
-                    y: anchor.y * imageHeight
-                )
+        for polyline in placement.polylines {
+            for index in 0..<(polyline.points.count - 1) {
+                let start = polyline.points[index]
+                let end = polyline.points[index + 1]
                 segments.append((start, end))
                 totalLength += hypot(end.x - start.x, end.y - start.y)
             }

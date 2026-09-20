@@ -107,10 +107,11 @@ private final class ToastContentView: NSView {
     init(text: String, symbolName: String) {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = NSColor(white: 0.07, alpha: 0.94).cgColor
+        // 白底主题下提示条也走浅色：白底、深字、细描边。
+        layer?.backgroundColor = NSColor(white: 0.99, alpha: 0.96).cgColor
         layer?.cornerRadius = 16
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor(white: 1, alpha: 0.14).cgColor
+        layer?.borderColor = NSColor(white: 0, alpha: 0.12).cgColor
 
         let icon = NSImageView()
         icon.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
@@ -127,7 +128,7 @@ private final class ToastContentView: NSView {
 
         let label = NSTextField(labelWithString: text)
         label.font = .systemFont(ofSize: 15, weight: .medium)
-        label.textColor = .white
+        label.textColor = NSColor(white: 0.11, alpha: 1)
         label.lineBreakMode = .byTruncatingTail
 
         let stack = NSStackView(views: [icon, label])

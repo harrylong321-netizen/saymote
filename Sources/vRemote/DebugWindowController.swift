@@ -119,20 +119,24 @@ enum PermissionKind: String, Identifiable, CaseIterable {
 }
 
 private enum ConsoleTheme {
-    static let panel = Color(red: 0.055, green: 0.059, blue: 0.067)
-    static let surface = Color(red: 0.083, green: 0.091, blue: 0.103)
-    static let surface2 = Color(red: 0.102, green: 0.112, blue: 0.124)
-    static let line = Color(red: 0.22, green: 0.23, blue: 0.25)
-    static let lineSoft = Color(red: 0.15, green: 0.16, blue: 0.18)
-    static let text = Color(red: 0.93, green: 0.94, blue: 0.95)
-    static let secondary = Color(red: 0.55, green: 0.57, blue: 0.61)
-    static let tertiary = Color(red: 0.39, green: 0.41, blue: 0.45)
-    static let green = Color(red: 0.31, green: 0.82, blue: 0.53)
-    static let amber = Color(red: 0.96, green: 0.61, blue: 0.19)
-    static let amberDeep = Color(red: 0.16, green: 0.13, blue: 0.09)
-    static let red = Color(red: 0.94, green: 0.33, blue: 0.34)
-    static let redDeep = Color(red: 0.25, green: 0.08, blue: 0.09)
-    static let black = Color(red: 0.025, green: 0.028, blue: 0.032)
+    // 白色底主题：panel 是窗口底、surface 是卡片、surface2 是卡片里的嵌层，
+    // black 沿用旧名字表示「凹下去的中性面」——现在是浅灰而不是黑。
+    static let panel = Color(red: 0.965, green: 0.969, blue: 0.976)
+    static let surface = Color.white
+    static let surface2 = Color(red: 0.949, green: 0.957, blue: 0.969)
+    static let line = Color(red: 0.812, green: 0.831, blue: 0.859)
+    static let lineSoft = Color(red: 0.886, green: 0.898, blue: 0.918)
+    static let text = Color(red: 0.106, green: 0.118, blue: 0.145)
+    static let secondary = Color(red: 0.345, green: 0.376, blue: 0.427)
+    static let tertiary = Color(red: 0.420, green: 0.450, blue: 0.510)
+    // 状态色在白底上要压暗，否则对比度不够。
+    static let green = Color(red: 0.075, green: 0.520, blue: 0.270)
+    static let amber = Color(red: 0.680, green: 0.380, blue: 0.020)
+    static let amberDeep = Color(red: 0.996, green: 0.949, blue: 0.863)
+    static let red = Color(red: 0.808, green: 0.176, blue: 0.180)
+    static let redDeep = Color(red: 0.996, green: 0.918, blue: 0.914)
+    static let goodDeep = Color(red: 0.898, green: 0.961, blue: 0.914)
+    static let black = Color(red: 0.925, green: 0.937, blue: 0.953)
 }
 
 enum LogoAsset {
@@ -349,12 +353,12 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
         window.center()
         window.isReleasedWhenClosed = false
         window.backgroundColor = NSColor(
-            red: 0.055,
-            green: 0.059,
-            blue: 0.067,
+            red: 0.965,
+            green: 0.969,
+            blue: 0.976,
             alpha: 1
         )
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = NSAppearance(named: .aqua)
         window.minSize = windowSize
         window.maxSize = windowSize
         super.init(window: window)
@@ -370,7 +374,7 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
         }
         window.contentView = NSHostingView(
             rootView: StudioMixerView(model: model)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(.light)
                 .frame(
                     width: windowSize.width,
                     height: windowSize.height
@@ -750,17 +754,21 @@ private struct KeyMappingView: View {
                                 ? ConsoleTheme.green.opacity(0.75)
                                 : ConsoleTheme.tertiary.opacity(0.7)
                             var path = Path()
-                            path.move(to: line.start)
-                            path.addLine(to: line.end)
+                            guard let first = line.points.first else { continue }
+                            path.move(to: first)
+                            for point in line.points.dropFirst() {
+                                path.addLine(to: point)
+                            }
                             context.stroke(
                                 path,
                                 with: .color(color),
                                 style: StrokeStyle(lineWidth: 1, lineCap: .round)
                             )
+                            guard let end = line.points.last else { continue }
                             let dot = Path(
                                 ellipseIn: CGRect(
-                                    x: line.end.x - 3.5,
-                                    y: line.end.y - 3.5,
+                                    x: end.x - 3.5,
+                                    y: end.y - 3.5,
                                     width: 7,
                                     height: 7
                                 )
@@ -768,7 +776,7 @@ private struct KeyMappingView: View {
                             context.fill(dot, with: .color(color))
                             context.stroke(
                                 dot,
-                                with: .color(ConsoleTheme.black.opacity(0.75)),
+                                with: .color(ConsoleTheme.panel.opacity(0.9)),
                                 lineWidth: 1
                             )
                         }
@@ -1691,7 +1699,7 @@ private struct ConsoleButtonStyle: ButtonStyle {
     private var background: Color {
         switch tone {
         case .neutral: ConsoleTheme.black
-        case .good: Color(red: 0.06, green: 0.25, blue: 0.16)
+        case .good: ConsoleTheme.goodDeep
         case .warning: ConsoleTheme.amberDeep
         case .error: ConsoleTheme.redDeep
         }

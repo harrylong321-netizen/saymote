@@ -355,18 +355,18 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
         window.backgroundColor = NSColor(
-            red: 0.055,
-            green: 0.059,
-            blue: 0.067,
+            red: 0.965,
+            green: 0.969,
+            blue: 0.976,
             alpha: 1
         )
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = NSAppearance(named: .aqua)
         window.minSize = size
         window.maxSize = size
         window.center()
         window.contentView = NSHostingView(
             rootView: VersionUpdateView(model: model)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(.light)
         )
         super.init(window: window)
         window.delegate = self
@@ -411,12 +411,13 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
 }
 
 private enum UpdateTheme {
-    static let panel = Color(red: 0.055, green: 0.059, blue: 0.067)
-    static let surface = Color(red: 0.085, green: 0.092, blue: 0.105)
-    static let line = Color(red: 0.20, green: 0.22, blue: 0.25)
-    static let text = Color(red: 0.94, green: 0.95, blue: 0.96)
-    static let secondary = Color(red: 0.57, green: 0.60, blue: 0.66)
-    static let green = Color(red: 0.30, green: 0.82, blue: 0.53)
+    // 与控制台同一套白底配色（这里是独立窗口，颜色定义重复了一份）。
+    static let panel = Color(red: 0.965, green: 0.969, blue: 0.976)
+    static let surface = Color.white
+    static let line = Color(red: 0.812, green: 0.831, blue: 0.859)
+    static let text = Color(red: 0.106, green: 0.118, blue: 0.145)
+    static let secondary = Color(red: 0.345, green: 0.376, blue: 0.427)
+    static let green = Color(red: 0.075, green: 0.520, blue: 0.270)
 }
 
 private struct VersionUpdateView: View {
@@ -600,7 +601,7 @@ private struct UpdateButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(primary ? Color.black : UpdateTheme.text)
+            .foregroundStyle(primary ? Color.white : UpdateTheme.text)
             .padding(.horizontal, 20)
             .frame(minWidth: 110, minHeight: 38)
             .background(
