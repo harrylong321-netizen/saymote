@@ -685,6 +685,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 if CommandLine.arguments.contains("--voice-session-self-test") {
     exit(VoiceSessionSelfTest.run() ? EXIT_SUCCESS : EXIT_FAILURE)
 }
+if CommandLine.arguments.contains("--mapping-layout-self-test") {
+    exit(MappingLayoutSelfTest.run() ? EXIT_SUCCESS : EXIT_FAILURE)
+}
+if CommandLine.arguments.contains("--mapping-layout-dump") {
+    MappingLayoutSelfTest.dump()
+    exit(EXIT_SUCCESS)
+}
 #endif
 
 let app = NSApplication.shared

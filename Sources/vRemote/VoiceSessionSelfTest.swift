@@ -328,4 +328,121 @@ enum VoiceSessionSelfTest {
         )
     }
 }
+
+/// 按键映射页的排版自测：连线必须不相交、每栏放得下、两栏不空转。
+/// 锚点改动后跑一次（`--mapping-layout-self-test`），别等肉眼发现问题。
+enum MappingLayoutSelfTest {
+    private static func emit(_ message: String) {
+        FileHandle.standardError.write(Data((message + "\n").utf8))
+    }
+
+    private static func aspect(for remote: SupportedRemoteID) -> CGFloat {
+        guard let image = RemoteImageAsset.image(for: remote),
+              image.size.height > 0
+        else { return 0.34 }
+        return image.size.width / image.size.height
+    }
+
+    /// 把真实排版导出成 JSON，给 `work/make-anchor-preview.py` 画预览图用——
+    /// 这样预览和界面是同一次计算，不会各算一套。
+    static func dump() {
+        for remote in SupportedRemoteID.allCases {
+            let layout = RemoteMappingLayout.layout(
+                remote: remote,
+                width: RemoteMappingLayout.referenceWidth,
+                imageAspect: aspect(for: remote),
+                isActive: { _ in true }
+            )
+            func rowsJSON(_ rows: [RemoteMappingLayout.Row]) -> String {
+                rows.map { row in
+                    let anchor = row.anchor.map {
+                        String(format: "{\"x\": %.4f, \"y\": %.4f}", $0.x, $0.y)
+                    } ?? "null"
+                    return String(
+                        format: "{\"id\": \"%@\", \"title\": \"%@\", \"y\": %.1f, \"anchor\": %@}",
+                        row.button.id,
+                        row.button.title,
+                        row.centerY,
+                        anchor
+                    )
+                }.joined(separator: ", ")
+            }
+            let lines = layout.lines.map { line in
+                String(
+                    format: "{\"id\": \"%@\", \"x1\": %.1f, \"y1\": %.1f, \"x2\": %.1f, \"y2\": %.1f}",
+                    line.buttonID,
+                    line.start.x,
+                    line.start.y,
+                    line.end.x,
+                    line.end.y
+                )
+            }.joined(separator: ", ")
+            let json = """
+            {"remote": "\(remote.rawValue)", "width": \
+            \(RemoteMappingLayout.referenceWidth), \
+            "imageOriginX": \(layout.imageOriginX), \
+            "imageWidth": \(layout.imageWidth), \
+            "imageHeight": \(RemoteMappingLayout.imageHeight), \
+            "rowHeight": \(RemoteMappingLayout.rowHeight), \
+            "left": [\(rowsJSON(layout.left))], \
+            "right": [\(rowsJSON(layout.right))], \
+            "lines": [\(lines)]}
+            """
+            let line = "[MAPPING-LAYOUT] " + json.replacingOccurrences(of: "\n", with: "")
+            // 走 FileHandle：`exit()` 不会 flush stdio 缓冲，print 会丢。
+            FileHandle.standardOutput.write(Data((line + "\n").utf8))
+        }
+    }
+
+    static func run() -> Bool {
+        var failures = 0
+        for remote in SupportedRemoteID.allCases {
+            let remoteAspect = aspect(for: remote)
+            let layout = RemoteMappingLayout.layout(
+                remote: remote,
+                width: RemoteMappingLayout.referenceWidth,
+                imageAspect: remoteAspect,
+                isActive: { _ in true }
+            )
+            let name = remote.title
+            let rows = layout.left.count + layout.right.count
+            let maxRows = max(layout.left.count, layout.right.count)
+            var crossings = 0
+            for i in layout.lines.indices {
+                for j in layout.lines.indices where j > i {
+                    let a = layout.lines[i]
+                    let b = layout.lines[j]
+                    func side(_ p: CGPoint, _ q: CGPoint, _ r: CGPoint) -> CGFloat {
+                        (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)
+                    }
+                    let d1 = side(b.start, b.end, a.start)
+                    let d2 = side(b.start, b.end, a.end)
+                    let d3 = side(a.start, a.end, b.start)
+                    let d4 = side(a.start, a.end, b.end)
+                    if ((d1 > 0) != (d2 > 0)), ((d3 > 0) != (d4 > 0)) {
+                        crossings += 1
+                        emit("[MAPPING-TEST] ⚠️ \(name) 连线相交：\(a.buttonID) × \(b.buttonID)")
+                    }
+                }
+            }
+            emit(
+                "[MAPPING-TEST] \(name) 左栏 \(layout.left.count) 行 / 右栏 "
+                    + "\(layout.right.count) 行，共 \(rows) 行，"
+                    + "\(layout.lines.count) 条连线，相交 \(crossings) 处"
+            )
+            if crossings > 0 {
+                failures += 1
+                emit("[MAPPING-TEST] FAIL \(name)：连线相交")
+            } else {
+                emit("[MAPPING-TEST] PASS \(name)：连线不相交")
+            }
+            if maxRows > RemoteMappingLayout.maxRowsPerColumn {
+                failures += 1
+                emit("[MAPPING-TEST] FAIL \(name)：一栏 \(maxRows) 行，超过 \(RemoteMappingLayout.maxRowsPerColumn) 行")
+            }
+        }
+        emit("[MAPPING-TEST] completed failures=\(failures)")
+        return failures == 0
+    }
+}
 #endif

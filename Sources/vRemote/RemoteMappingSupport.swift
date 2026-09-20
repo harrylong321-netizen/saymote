@@ -476,3 +476,318 @@ enum RemoteAnchors {
         // mouseMode 鼠标模式、s01 电源：图上看不到
     ]
 }
+
+/// 按键映射页的排版：两栏行 + 中间遥控器图 + 每行连到对应按键的连线。
+///
+/// 用户要求「连线不能相交」，这件事有几何前提：同一栏里的行必须按它那几个
+/// 按键的上下顺序排，并且每栏的线只走自己那半边（左栏的线终点 x < 中线、
+/// 右栏的 > 中线），否则斜线必然交叉。分栏不是简单按 x < 0.5 切——那样
+/// X6 会变成 5 行 / 10 行（超过一栏放得下的 10 行），得有解才行。所以这里
+/// 用一个爬山搜索（单步 → 卡住时试两步）在「交叉数、溢出、两栏不均衡、
+/// 连线总长」上取最优解，结果按型号缓存（锚点是静态的，只算一次）。
+enum RemoteMappingLayout {
+    static let rowHeight: CGFloat = 30
+    static let rowGap: CGFloat = 5
+    static let topInset: CGFloat = 2
+    static let maxRowsPerColumn = 10
+    static let centerColumnWidth: CGFloat = 144
+    static let columnGap: CGFloat = 12
+    static let imageHeight: CGFloat = 330
+    /// 控制台内容宽度固定 735，分栏按这个宽度算（缓存也按它算）。
+    static let referenceWidth: CGFloat = 735
+
+    struct Row {
+        let button: RemoteButtonDefinition
+        let anchor: CGPoint?
+        let centerY: CGFloat
+    }
+
+    struct Line {
+        let buttonID: String
+        let start: CGPoint
+        let end: CGPoint
+        let active: Bool
+    }
+
+    struct Layout {
+        let left: [Row]
+        let right: [Row]
+        let lines: [Line]
+        let imageOriginX: CGFloat
+        let imageWidth: CGFloat
+    }
+
+    private struct Geometry {
+        let sideWidth: CGFloat
+        let leftEdge: CGFloat
+        let rightEdge: CGFloat
+        let imageOriginX: CGFloat
+        let imageWidth: CGFloat
+    }
+
+    private struct Metrics: Comparable {
+        let crossings: Int
+        let overflow: Int
+        let imbalance: Int
+        let length: Int
+
+        static func < (lhs: Metrics, rhs: Metrics) -> Bool {
+            if lhs.crossings != rhs.crossings { return lhs.crossings < rhs.crossings }
+            if lhs.overflow != rhs.overflow { return lhs.overflow < rhs.overflow }
+            if lhs.imbalance != rhs.imbalance { return lhs.imbalance < rhs.imbalance }
+            return lhs.length < rhs.length
+        }
+    }
+
+    private static var assignmentCache: [SupportedRemoteID: [String: Bool]] = [:]
+    private static let cacheLock = NSLock()
+
+    /// `imageAspect` = 图宽 / 图高；只有它影响线段几何。
+    static func layout(
+        remote: SupportedRemoteID,
+        width: CGFloat,
+        imageAspect: CGFloat,
+        isActive: (RemoteButtonDefinition) -> Bool
+    ) -> Layout {
+        let buttons = RemoteProfiles.buttons(for: remote)
+        var anchored: [(RemoteButtonDefinition, CGPoint)] = []
+        var unanchored: [RemoteButtonDefinition] = []
+        for button in buttons {
+            if let anchor = RemoteAnchors.anchor(forButton: button.id, remote: remote) {
+                anchored.append((button, anchor))
+            } else {
+                unanchored.append(button)
+            }
+        }
+        let geometry = geometry(width: width, imageAspect: imageAspect)
+        let assignment = cachedAssignment(
+            remote: remote,
+            anchored: anchored,
+            unanchoredCount: unanchored.count,
+            imageAspect: imageAspect
+        )
+
+        var columns: [Bool: [(RemoteButtonDefinition, CGPoint?)]] = [true: [], false: []]
+        for (button, anchor) in anchored {
+            columns[assignment[button.id] ?? false, default: []]
+                .append((button, anchor))
+        }
+        let shorter: Bool = columns[true]!.count <= columns[false]!.count
+        columns[shorter]?.append(contentsOf: unanchored.map { ($0, nil) })
+
+        func rows(for isLeft: Bool) -> [Row] {
+            (columns[isLeft] ?? [])
+                .sorted { lhs, rhs in
+                    switch (lhs.1, rhs.1) {
+                    case let (l?, r?): r.y == l.y ? l.x < r.x : l.y < r.y
+                    case (nil, _): false
+                    case (_, nil): true
+                    }
+                }
+                .enumerated()
+                .map { index, entry in
+                    Row(
+                        button: entry.0,
+                        anchor: entry.1,
+                        centerY: topInset
+                            + CGFloat(index) * (rowHeight + rowGap)
+                            + rowHeight / 2
+                    )
+                }
+        }
+
+        let leftRows = rows(for: true)
+        let rightRows = rows(for: false)
+        var lines: [Line] = []
+        for (rowList, edge) in [(leftRows, geometry.leftEdge), (rightRows, geometry.rightEdge)] {
+            for row in rowList {
+                guard let anchor = row.anchor else { continue }
+                lines.append(
+                    Line(
+                        buttonID: row.button.id,
+                        start: CGPoint(x: edge, y: row.centerY),
+                        end: CGPoint(
+                            x: geometry.imageOriginX + anchor.x * geometry.imageWidth,
+                            y: anchor.y * imageHeight
+                        ),
+                        active: isActive(row.button)
+                    )
+                )
+            }
+        }
+        return Layout(
+            left: leftRows,
+            right: rightRows,
+            lines: lines,
+            imageOriginX: geometry.imageOriginX,
+            imageWidth: geometry.imageWidth
+        )
+    }
+
+    // MARK: - 分栏求解
+
+    private static func cachedAssignment(
+        remote: SupportedRemoteID,
+        anchored: [(RemoteButtonDefinition, CGPoint)],
+        unanchoredCount: Int,
+        imageAspect: CGFloat
+    ) -> [String: Bool] {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let cached = assignmentCache[remote] { return cached }
+        let solved = solve(
+            anchored: anchored,
+            unanchoredCount: unanchoredCount,
+            imageAspect: imageAspect
+        )
+        assignmentCache[remote] = solved
+        return solved
+    }
+
+    private static func solve(
+        anchored: [(RemoteButtonDefinition, CGPoint)],
+        unanchoredCount: Int,
+        imageAspect: CGFloat
+    ) -> [String: Bool] {
+        var assignment: [String: Bool] = [:]
+        for (button, anchor) in anchored {
+            assignment[button.id] = anchor.x < 0.5
+        }
+        var current = metrics(
+            assignment: assignment,
+            anchored: anchored,
+            unanchoredCount: unanchoredCount,
+            imageAspect: imageAspect
+        )
+        var steps = 0
+        while steps < 200, current.crossings > 0 || current.overflow > 0 {
+            var best: ([String: Bool], Metrics)?
+            for (button, _) in anchored {
+                var trial = assignment
+                trial[button.id] = !(assignment[button.id] ?? true)
+                let value = metrics(
+                    assignment: trial,
+                    anchored: anchored,
+                    unanchoredCount: unanchoredCount,
+                    imageAspect: imageAspect
+                )
+                if value < current, best == nil || value < best!.1 {
+                    best = (trial, value)
+                }
+            }
+            if let best {
+                assignment = best.0
+                current = best.1
+                steps += 1
+                continue
+            }
+            // 单步卡住：试两步组合逃出去（X6 用得到）。
+            var escape: ([String: Bool], Metrics)?
+            for i in anchored.indices {
+                for j in anchored.indices where j > i {
+                    var trial = assignment
+                    trial[anchored[i].0.id]?.toggle()
+                    trial[anchored[j].0.id]?.toggle()
+                    let value = metrics(
+                        assignment: trial,
+                        anchored: anchored,
+                        unanchoredCount: unanchoredCount,
+                        imageAspect: imageAspect
+                    )
+                    if value < current, escape == nil || value < escape!.1 {
+                        escape = (trial, value)
+                    }
+                }
+            }
+            guard let escape else { break }
+            assignment = escape.0
+            current = escape.1
+            steps += 1
+        }
+        return assignment
+    }
+
+    private static func metrics(
+        assignment: [String: Bool],
+        anchored: [(RemoteButtonDefinition, CGPoint)],
+        unanchoredCount: Int,
+        imageAspect: CGFloat
+    ) -> Metrics {
+        let geometry = geometry(width: referenceWidth, imageAspect: imageAspect)
+        var columns: [Bool: [CGPoint]] = [true: [], false: []]
+        for (button, anchor) in anchored {
+            columns[assignment[button.id] ?? false, default: []].append(anchor)
+        }
+        let shorter: Bool = columns[true]!.count <= columns[false]!.count
+        let leftCount = columns[true]!.count + (shorter ? unanchoredCount : 0)
+        let rightCount = columns[false]!.count + (shorter ? 0 : unanchoredCount)
+
+        var segments: [(CGPoint, CGPoint)] = []
+        var totalLength = 0.0
+        for (isLeft, edge) in [(true, geometry.leftEdge), (false, geometry.rightEdge)] {
+            let anchors = (columns[isLeft] ?? []).sorted {
+                $0.y == $1.y ? $0.x < $1.x : $0.y < $1.y
+            }
+            for (index, anchor) in anchors.enumerated() {
+                let start = CGPoint(
+                    x: edge,
+                    y: topInset + CGFloat(index) * (rowHeight + rowGap) + rowHeight / 2
+                )
+                let end = CGPoint(
+                    x: geometry.imageOriginX + anchor.x * geometry.imageWidth,
+                    y: anchor.y * imageHeight
+                )
+                segments.append((start, end))
+                totalLength += hypot(end.x - start.x, end.y - start.y)
+            }
+        }
+        var crossings = 0
+        for i in segments.indices {
+            for j in segments.indices where j > i {
+                if segmentsCross(
+                    segments[i].0,
+                    segments[i].1,
+                    segments[j].0,
+                    segments[j].1
+                ) {
+                    crossings += 1
+                }
+            }
+        }
+        return Metrics(
+            crossings: crossings,
+            overflow: max(0, leftCount - maxRowsPerColumn)
+                + max(0, rightCount - maxRowsPerColumn),
+            imbalance: abs(leftCount - rightCount),
+            length: Int(totalLength.rounded())
+        )
+    }
+
+    private static func segmentsCross(
+        _ a1: CGPoint,
+        _ a2: CGPoint,
+        _ b1: CGPoint,
+        _ b2: CGPoint
+    ) -> Bool {
+        func side(_ p: CGPoint, _ q: CGPoint, _ r: CGPoint) -> CGFloat {
+            (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)
+        }
+        let d1 = side(b1, b2, a1)
+        let d2 = side(b1, b2, a2)
+        let d3 = side(a1, a2, b1)
+        let d4 = side(a1, a2, b2)
+        return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0))
+    }
+
+    private static func geometry(width: CGFloat, imageAspect: CGFloat) -> Geometry {
+        let sideWidth = max(0, (width - centerColumnWidth - 2 * columnGap) / 2)
+        let imageWidth = imageHeight * imageAspect
+        return Geometry(
+            sideWidth: sideWidth,
+            leftEdge: sideWidth,
+            rightEdge: sideWidth + centerColumnWidth + 2 * columnGap,
+            imageOriginX: sideWidth + columnGap + (centerColumnWidth - imageWidth) / 2,
+            imageWidth: imageWidth
+        )
+    }
+}
