@@ -48,10 +48,6 @@ final class X6SessionCoordinator {
     private struct PhysicalVoiceGesture {
         let beganAt: Date
         let recognitionWasOpen: Bool
-        /// 豆包在录音、但用的不是我们的虚拟声卡（例如内置麦克风）。
-        /// 这种情况下这一按只接管路由、不点豆包——让豆包的「自动检测」
-        /// 自己把输入切到遥控器，抬起时也不该补点。
-        let switchOnly: Bool
         let generation: UInt64
     }
 
@@ -174,47 +170,18 @@ final class X6SessionCoordinator {
         }
 
         if supportsPhysicalHoldGesture, reason == 0x03 {
-            let recording = trustedDoubaoRecording()
-
-            // 情况三：豆包正在录音，但用的不是我们的虚拟声卡（例如内置麦克风）。
-            // 这一下不该点豆包（那会把它关掉），只把我们的路由打开，
-            // 让豆包的「自动检测」按“哪个设备在用”自己切到遥控器。
-            if recording == true, trustedDoubaoUsesVRemote() == false {
-                generation &+= 1
-                cancelScheduledWork()
-                phase = .open
-                owner = .remote
-                sessionRemote = remote
-                activateRemoteRoute()
-                if physicalVoiceGestures[remote] == nil {
-                    physicalVoiceGestures[remote] = PhysicalVoiceGesture(
-                        beganAt: now(),
-                        recognitionWasOpen: true,
-                        switchOnly: true,
-                        generation: generation
-                    )
-                }
-                requestRemoteTransportOpen(
-                    remote,
-                    bypassDebounce: false,
-                    attempt: 1
-                )
-                print(
-                    "[VOICE-SESSION] 豆包在录音但用的不是遥控器麦克风：" +
-                    "只切路由、不点它，等自动检测切过来"
-                )
-                publish("已切到遥控器麦克风")
-                return
-            }
-
             // 「这一下该开还是该关」同样以豆包的真实状态为准；读数不可采信时
             // 才退回 App 自己的阶段记录。
-            let recognitionWasOpen = recording ?? (phase == .open)
+            //
+            // 注：曾经试过「豆包在用内置麦克风时只切路由、不点它，让豆包的
+            // 自动检测自己切过来」——实测无效：自动检测并不会因为我们把
+            // vRemoteDr 打开就切过去（29 次读数它始终留在内置麦克风），
+            // 结果反而变成「按了关不掉」。所以不点这一下是不行的。
+            let recognitionWasOpen = trustedDoubaoRecording() ?? (phase == .open)
             if physicalVoiceGestures[remote] == nil {
                 physicalVoiceGestures[remote] = PhysicalVoiceGesture(
                     beganAt: now(),
                     recognitionWasOpen: recognitionWasOpen,
-                    switchOnly: false,
                     generation: generation
                 )
             }
@@ -284,7 +251,6 @@ final class X6SessionCoordinator {
                 physicalVoiceGestures[remote] = PhysicalVoiceGesture(
                     beganAt: gesture.beganAt,
                     recognitionWasOpen: gesture.recognitionWasOpen,
-                    switchOnly: gesture.switchOnly,
                     generation: generation
                 )
             }
@@ -323,15 +289,6 @@ final class X6SessionCoordinator {
                 print(
                     "[VOICE-SESSION] stale physical release ignored " +
                     "remote=\(remote.rawValue)"
-                )
-                return
-            }
-
-            // 「只切路由」那一按本来就没点豆包，抬起时也不要补点：
-            // 豆包应该继续录着，只是把输入源换成了遥控器。
-            if gesture.switchOnly {
-                print(
-                    "[VOICE-SESSION] switch-only 手势结束，不点豆包"
                 )
                 return
             }
