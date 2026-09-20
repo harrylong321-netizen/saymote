@@ -67,8 +67,12 @@ enum PermissionKind: String, Identifiable, CaseIterable {
                     "Open Voice Input, locate Microphone Selection, and click the current option."
                 ),
                 L10n.text(
-                    "选择“自动检测”或“vRemoteDr 2ch”。如果自动检测没有声音，请直接选择 vRemoteDr 2ch。",
-                    "Choose Automatic Detection or vRemoteDr 2ch. If automatic detection is silent, select vRemoteDr 2ch directly."
+                    "选择“遥控器麦克风”（豆包列表里这一项显示为 vRemoteDr 2ch）。",
+                    "Select “Remote microphone” (listed as vRemoteDr 2ch in Doubao's list)."
+                ),
+                L10n.text(
+                    "不要选“自动检测”。实测它不会跟随 vRemoter 切换，往往一直用内置麦克风，而且选上之后短按关不掉录音。",
+                    "Do not choose Automatic Detection. Measured behaviour: it does not follow vRemoter, tends to keep using the built-in microphone, and once selected a short press cannot stop recording."
                 )
             ]
         case .accessibility:
@@ -566,7 +570,8 @@ private struct StudioMixerView: View {
                 title: L10n.text("豆包输入设备", "Doubao input"),
                 value: model.doubaoIsRecording
                     ? (model.doubaoUsesVRemote
-                        ? L10n.text("vRemoteDr 2ch · 录音中", "vRemoteDr 2ch · Recording")
+                        ? L10n.text("遥控器麦克风 · 录音中",
+                                    "Remote microphone · Recording")
                         : model.doubaoInput)
                     : L10n.text("当前未录音", "Not recording"),
                 tone: model.doubaoIsRecording && !model.doubaoUsesVRemote ? .error : .good,
@@ -578,7 +583,8 @@ private struct StudioMixerView: View {
             StatusRow(
                 title: L10n.text("音频驱动", "Audio driver"),
                 value: model.driverAvailable
-                    ? L10n.text("vRemoteDr 2ch 可用", "vRemoteDr 2ch available")
+                    ? L10n.text("遥控器麦克风可用",
+                                "Remote microphone available")
                     : L10n.text("未安装或需要修复", "Missing or needs repair"),
                 tone: model.driverAvailable ? .good : .error,
                 action: model.driverAvailable ? nil : L10n.text("打开声音", "Open Sound"),
@@ -1360,7 +1366,7 @@ private struct OutputChannelView: View {
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
                 Spacer()
-                Text("vRemoteDr 2ch")
+                Text(L10n.text("遥控器麦克风", "Remote microphone"))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(ConsoleTheme.text)
                     .lineLimit(1)

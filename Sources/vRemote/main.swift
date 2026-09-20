@@ -1,14 +1,14 @@
 // vRemote for macOS.
 //
 // 1. Supported remote voice key → matching Option toggle semantics
-// 2. Remote ATVV + Mac microphone → aligned mix → vRemoteDr 2ch → Doubao
+// 2. Remote ATVV voice data → vRemoteDr 2ch (界面里叫「遥控器麦克风」) → Doubao
 // 3. A physical Mac Option key controls the same remote microphone session
 //
 // macOS-only. Requires:
 //   * X6-Remote or Chromecast Remote paired in System Settings → Bluetooth
 //   * Accessibility permission (System Settings → Privacy & Security →
 //     Accessibility) for Option observation and Search suppression
-//   * vRemoteDriver.driver installed and visible as vRemoteDr 2ch in
+//   * vRemoteDriver.driver installed and visible as vRemoteDr 2ch（界面显示「遥控器麦克风」）in
 //     System Settings → Sound → Input/Output
 //   * Doubao IME configured for Option-as-voice-mode trigger
 //
