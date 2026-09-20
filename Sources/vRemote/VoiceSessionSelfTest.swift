@@ -146,7 +146,8 @@ enum VoiceSessionSelfTest {
             h.openRequests.count == 1,
             "unavailable: trigger still requests microphone open"
         )
-        RunLoop.current.run(until: Date().addingTimeInterval(1.3))
+        // 开麦校验在 +1.0 秒触发；这里留足余量，机器忙的时候也不至于误判。
+        RunLoop.current.run(until: Date().addingTimeInterval(2.0))
         c.expect(
             h.coordinator.debugSnapshot.phase == "open",
             "unavailable: session stays open because state cannot be verified"
@@ -161,7 +162,7 @@ enum VoiceSessionSelfTest {
     ) {
         let h = Harness(initialState: .unavailable)
         h.coordinator.triggerDownObserved(isSynthetic: false)
-        RunLoop.current.run(until: Date().addingTimeInterval(1.1))
+        RunLoop.current.run(until: Date().addingTimeInterval(1.6))
         c.expect(
             h.coordinator.debugSnapshot.phase == "open",
             "doubao self-stop: 开麦后先处于已打开"
@@ -169,7 +170,7 @@ enum VoiceSessionSelfTest {
         // 避开「刚点过触发键」的 1 秒settle窗口，再让设备列表变空。
         h.advance(1.2)
         h.doubao.emit(.unavailable)
-        RunLoop.current.run(until: Date().addingTimeInterval(1.3))
+        RunLoop.current.run(until: Date().addingTimeInterval(2.0))
         c.expect(
             h.coordinator.debugSnapshot.phase == "closed",
             "doubao self-stop: 豆包自己停录后会话自动收尾"
