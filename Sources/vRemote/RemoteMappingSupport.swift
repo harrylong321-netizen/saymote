@@ -414,3 +414,65 @@ final class RemoteMappingStore: ObservableObject {
         revision += 1
     }
 }
+
+/// 遥控器按键在产品图上的位置（归一化 0–1：x 向右、y 向下，相对原图像素）。
+///
+/// 这里的坐标不是"看图标的"——是在 PNG 上算出来的：先用 alpha 通道求机身轮廓，
+/// 再按亮度阈值找按键团块取质心，带字的键用 Vision OCR 的文字框交叉验证
+/// （Chromecast 的 YouTube / NETFLIX、X6 的 Del / OK / PG+ / PG− 都是这么定的）。
+/// 图上确实没有、或定位不到的按键留空，那几行就没有编号与圆点。
+///
+/// 复核：`work/make-anchor-preview.py` 会按这里的坐标画一张带编号的预览图，
+/// 肉眼看一眼就知道哪个点没落在按键上。
+enum RemoteAnchors {
+    static func anchor(
+        forButton id: String,
+        remote: SupportedRemoteID
+    ) -> CGPoint? {
+        switch remote {
+        case .chromecast: chromecast[id]
+        case .x6: x6[id]
+        }
+    }
+
+    /// Chromecast Voice Remote（产品图 388×1080）
+    static let chromecast: [String: CGPoint] = [
+        // 方向盘上的箭头在这张产品图里几乎看不见（对比度 1 个灰阶以内），
+        // 所以四个方向按几何位置放在环带中线上：圆心 (0.500, 0.155)、
+        // 外环半径约 142px、中间确认键半径约 41px → 环带中线半径约 91px。
+        "03": CGPoint(x: 0.500, y: 0.070),    // 方向上（环带 12 点）
+        "04": CGPoint(x: 0.500, y: 0.239),    // 方向下（环带 6 点）
+        "05": CGPoint(x: 0.265, y: 0.155),    // 方向左（环带 9 点）
+        "06": CGPoint(x: 0.734, y: 0.155),    // 方向右（环带 3 点）
+        "07": CGPoint(x: 0.500, y: 0.155),    // 确认（方向盘圆心）
+        "0B": CGPoint(x: 0.297, y: 0.348),    // 返回
+        "0A": CGPoint(x: 0.298, y: 0.471),    // Home
+        "0E": CGPoint(x: 0.298, y: 0.594),    // YouTube（OCR 读出文字）
+        "voice": CGPoint(x: 0.694, y: 0.349), // 语音（深色键 + 四色点）
+        "08": CGPoint(x: 0.689, y: 0.471),    // 静音
+        "0F": CGPoint(x: 0.694, y: 0.594),    // Netflix（OCR 读出文字）
+        "0C": CGPoint(x: 0.712, y: 0.715),    // 音量＋
+        "0D": CGPoint(x: 0.287, y: 0.715)     // 音量－
+        // 01 电源、11 信源：这张正面图上没有这两个键
+    ]
+
+    /// X6 Remote（产品图 289×863）
+    static let x6: [String: CGPoint] = [
+        "c224": CGPoint(x: 0.298, y: 0.161),  // 返回（左上圆键）
+        "k2A": CGPoint(x: 0.522, y: 0.161),   // Delete（OCR 读出 "Del"）
+        "k65": CGPoint(x: 0.740, y: 0.161),   // 菜单（右上圆键）
+        "cE2": CGPoint(x: 0.280, y: 0.225),   // 静音
+        "c196": CGPoint(x: 0.520, y: 0.225),  // 浏览器/搜索
+        "k52": CGPoint(x: 0.523, y: 0.293),   // 方向上
+        "k51": CGPoint(x: 0.523, y: 0.443),   // 方向下
+        "k50": CGPoint(x: 0.298, y: 0.368),   // 方向左
+        "k4F": CGPoint(x: 0.748, y: 0.368),   // 方向右
+        "k28": CGPoint(x: 0.523, y: 0.368),   // OK（OCR 读出 "OK"）
+        "k4B": CGPoint(x: 0.286, y: 0.491),   // PG+（OCR）
+        "k4E": CGPoint(x: 0.286, y: 0.582),   // PG−（OCR）
+        "voice": CGPoint(x: 0.503, y: 0.536), // 语音（麦克风图标）
+        "cE9": CGPoint(x: 0.740, y: 0.491),   // 音量＋
+        "cEA": CGPoint(x: 0.740, y: 0.582)    // 音量−
+        // mouseMode 鼠标模式、s01 电源：图上看不到
+    ]
+}

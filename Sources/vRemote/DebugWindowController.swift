@@ -723,16 +723,24 @@ private struct KeyMappingView: View {
     @State private var selectedDevice: SupportedRemoteID = .chromecast
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
             triggerPanel
                 .frame(height: 116)
-            HStack(spacing: 14) {
-                devicePanel
-                    .frame(width: 238)
-                mappingPanel
+            deviceBar
+                .frame(height: 36)
+            HStack(alignment: .top, spacing: 12) {
+                mappingColumn(slots.left, badgeSide: .trailing)
+                centerColumn
+                    .frame(width: Self.centerColumnWidth)
+                mappingColumn(slots.right, badgeSide: .leading)
             }
+            .frame(maxHeight: .infinity)
         }
     }
+
+    /// 遥控器图统一高度：两张图按各自比例缩放，等高摆放。
+    private static let remoteImageHeight: CGFloat = 330
+    private static let centerColumnWidth: CGFloat = 144
 
     private var triggerPanel: some View {
         HStack(spacing: 18) {
@@ -786,166 +794,177 @@ private struct KeyMappingView: View {
         .background(panelBackground(ConsoleTheme.surface, radius: 17))
     }
 
-    private var devicePanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(L10n.text("支持的设备", "Supported devices"))
-                .font(.system(size: 12, weight: .semibold))
+    // MARK: - 设备条
+
+    private var deviceBar: some View {
+        HStack(spacing: 10) {
+            Picker("", selection: $selectedDevice) {
+                ForEach(SupportedRemoteID.allCases) { remote in
+                    Text(remote.title).tag(remote)
+                }
+            }
+            .labelsHidden()
+            .frame(width: 232)
+            Circle()
+                .fill(deviceConnected ? ConsoleTheme.green : ConsoleTheme.tertiary)
+                .frame(width: 8, height: 8)
+                .help(deviceConnected
+                    ? L10n.text("已连接", "Connected")
+                    : L10n.text("未连接", "Offline"))
+            Spacer(minLength: 8)
+            if !mappings.isEnabled(selectedDevice) {
+                Label(
+                    L10n.text("未启用时保持系统原行为", "System behavior is unchanged"),
+                    systemImage: "info.circle"
+                )
+                .font(.system(size: 10.5))
                 .foregroundStyle(ConsoleTheme.secondary)
-
-            DeviceSelectionRow(
-                title: SupportedRemoteID.chromecast.title,
-                signature: SupportedRemoteID.chromecast.signature,
-                connected: model.chromecastConnected,
-                selected: selectedDevice == .chromecast
-            ) { selectedDevice = .chromecast }
-
-            DeviceSelectionRow(
-                title: SupportedRemoteID.x6.title,
-                signature: SupportedRemoteID.x6.signature,
-                connected: model.x6Connected,
-                selected: selectedDevice == .x6
-            ) { selectedDevice = .x6 }
-
-            Spacer()
-            Label(
-                L10n.text(
-                    "设置跟随型号，不绑定某一只遥控器",
-                    "Settings follow the model, not one unit"
-                ),
-                systemImage: "checkmark.shield.fill"
+            }
+            Toggle(
+                L10n.text("启用映射", "Enable"),
+                isOn: Binding(
+                    get: { mappings.isEnabled(selectedDevice) },
+                    set: { model.setRemoteMappingEnabled($0, remote: selectedDevice) }
+                )
             )
-            .font(.system(size: 10.5, weight: .medium))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            Button(L10n.text("恢复默认", "Reset")) {
+                mappings.reset(selectedDevice)
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11.5, weight: .semibold))
             .foregroundStyle(ConsoleTheme.green)
-            .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(15)
-        .background(panelBackground(ConsoleTheme.surface, radius: 17))
+        .padding(.horizontal, 14)
+        .background(panelBackground(ConsoleTheme.surface, radius: 15))
     }
 
-    private var mappingPanel: some View {
-        HStack(spacing: 14) {
-            VStack(spacing: 10) {
-                RemoteProductImage(kind: selectedDevice)
-                    .frame(width: 128)
-                Text(selectedDevice == .chromecast
-                    ? L10n.text("14 个可映射键", "14 mappable buttons")
-                    : L10n.text("15 个正面可映射键", "15 mappable front buttons"))
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(ConsoleTheme.secondary)
-                    .multilineTextAlignment(.center)
-                if selectedDevice == .x6 {
-                    Text(L10n.text(
-                        "鼠标模式键由设备内部处理",
-                        "Mouse Mode is handled by the device"
-                    ))
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(ConsoleTheme.tertiary)
-                        .multilineTextAlignment(.center)
-                }
-                Spacer()
-            }
-            .padding(.top, 14)
-            .frame(width: 130)
-            Divider().overlay(ConsoleTheme.lineSoft)
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(selectedDevice.title)
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(ConsoleTheme.text)
-                        Text(L10n.text("点击右侧菜单修改按键", "Use each menu to assign a key"))
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(ConsoleTheme.tertiary)
-                    }
-                    Spacer()
-                    Toggle(
-                        L10n.text("启用映射", "Enable"),
-                        isOn: Binding(
-                            get: { mappings.isEnabled(selectedDevice) },
-                            set: { model.setRemoteMappingEnabled($0, remote: selectedDevice) }
-                        )
+    private var deviceConnected: Bool {
+        selectedDevice == .chromecast ? model.chromecastConnected : model.x6Connected
+    }
+
+    // MARK: - 左中右三栏
+
+    private func mappingColumn(
+        _ slots: [MappingSlot],
+        badgeSide: MappingBadgeSide
+    ) -> some View {
+        ScrollView {
+            VStack(spacing: 6) {
+                ForEach(slots, id: \.button.id) { slot in
+                    MappingRow(
+                        remote: selectedDevice,
+                        button: slot.button,
+                        enabled: mappings.isEnabled(selectedDevice),
+                        badgeNumber: slot.number,
+                        badgeSide: badgeSide
                     )
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                }
-                Divider().overlay(ConsoleTheme.lineSoft)
-                ScrollView {
-                    LazyVStack(spacing: 6) {
-                        ForEach(RemoteProfiles.buttons(for: selectedDevice)) { button in
-                            MappingRow(
-                                remote: selectedDevice,
-                                button: button,
-                                enabled: mappings.isEnabled(selectedDevice)
-                            )
-                        }
-                    }
-                }
-                HStack {
-                    if !mappings.isEnabled(selectedDevice) {
-                        Label(
-                            L10n.text("未启用时保持系统原行为", "System behavior is unchanged"),
-                            systemImage: "info.circle"
-                        )
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(ConsoleTheme.secondary)
-                    }
-                    Spacer()
-                    Button(L10n.text("恢复默认", "Reset")) {
-                        mappings.reset(selectedDevice)
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(ConsoleTheme.green)
                 }
             }
-            .frame(maxWidth: .infinity)
+            .padding(.vertical, 2)
         }
-        .padding(15)
-        .background(panelBackground(ConsoleTheme.surface, radius: 17))
+        .frame(maxWidth: .infinity)
     }
-}
 
-private struct DeviceSelectionRow: View {
-    let title: String
-    let signature: String
-    let connected: Bool
-    let selected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(connected ? ConsoleTheme.green : ConsoleTheme.tertiary)
-                        .frame(width: 8, height: 8)
-                    Text(title)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(ConsoleTheme.text)
-                        .lineLimit(1)
-                }
-                HStack {
-                    Text(signature)
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(ConsoleTheme.tertiary)
-                    Spacer()
-                    Text(connected
-                        ? L10n.text("已连接", "Connected")
-                        : L10n.text("未连接", "Offline"))
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(connected ? ConsoleTheme.green : ConsoleTheme.tertiary)
-                }
-            }
-            .padding(11)
-            .background(selected ? ConsoleTheme.surface2 : ConsoleTheme.black.opacity(0.35))
-            .overlay(
-                RoundedRectangle(cornerRadius: 11)
-                    .stroke(selected ? ConsoleTheme.green.opacity(0.8) : ConsoleTheme.lineSoft, lineWidth: 1)
+    private var centerColumn: some View {
+        VStack(spacing: 6) {
+            RemoteImageWithMarkers(
+                kind: selectedDevice,
+                markers: markers,
+                height: Self.remoteImageHeight,
+                width: Self.centerColumnWidth
             )
-            .clipShape(RoundedRectangle(cornerRadius: 11))
+            Text(L10n.text("图上编号 = 两侧对应行", "Numbers match the rows"))
+                .font(.system(size: 10))
+                .foregroundStyle(ConsoleTheme.tertiary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(title), \(connected ? "connected" : "offline")")
+        .frame(height: Self.remoteImageHeight + 30, alignment: .top)
+    }
+
+    // MARK: - 分栏与编号
+
+    private struct MappingSlot {
+        let button: RemoteButtonDefinition
+        /// 锚点定位不到的按键没有编号（行照常显示）。
+        let number: Int?
+    }
+
+    /// 按锚点在图片上的左右位置分栏：左栏自上而下 1..n，右栏接着编号；
+    /// 定位不到的键接在右栏末尾、不给编号。
+    private var slots: (left: [MappingSlot], right: [MappingSlot]) {
+        var anchored: [(RemoteButtonDefinition, CGPoint)] = []
+        var unanchored: [RemoteButtonDefinition] = []
+        for button in RemoteProfiles.buttons(for: selectedDevice) {
+            if let anchor = RemoteAnchors.anchor(
+                forButton: button.id,
+                remote: selectedDevice
+            ) {
+                anchored.append((button, anchor))
+            } else {
+                unanchored.append(button)
+            }
+        }
+        anchored.sort { $0.1.y == $1.1.y ? $0.1.x < $1.1.x : $0.1.y < $1.1.y }
+
+        var left = anchored.filter { $0.1.x < 0.5 }
+        var right = anchored.filter { $0.1.x >= 0.5 }
+        // 两栏行数别差太多：把最靠中线的那几行挪到少的一栏。
+        while left.count - right.count > 1,
+              let index = left.indices.min(by: {
+                  abs(left[$0].1.x - 0.5) < abs(left[$1].1.x - 0.5)
+              }) {
+            right.append(left.remove(at: index))
+        }
+        while right.count - left.count > 1,
+              let index = right.indices.min(by: {
+                  abs(right[$0].1.x - 0.5) < abs(right[$1].1.x - 0.5)
+              }) {
+            left.append(right.remove(at: index))
+        }
+        left.sort { $0.1.y < $1.1.y }
+        right.sort { $0.1.y < $1.1.y }
+
+        var number = 1
+        let leftSlots = left.map { entry -> MappingSlot in
+            defer { number += 1 }
+            return MappingSlot(button: entry.0, number: number)
+        }
+        var rightSlots = right.map { entry -> MappingSlot in
+            defer { number += 1 }
+            return MappingSlot(button: entry.0, number: number)
+        }
+        for button in unanchored {
+            rightSlots.append(MappingSlot(button: button, number: nil))
+        }
+        return (leftSlots, rightSlots)
+    }
+
+    private var markers: [RemoteImageMarker] {
+        (slots.left + slots.right).compactMap { slot in
+            guard let number = slot.number,
+                  let anchor = RemoteAnchors.anchor(
+                      forButton: slot.button.id,
+                      remote: selectedDevice
+                  )
+            else { return nil }
+            return RemoteImageMarker(
+                buttonID: slot.button.id,
+                number: number,
+                anchor: anchor,
+                active: markerActive(slot.button)
+            )
+        }
+    }
+
+    /// 图上的点跟着映射状态走：这个键没被「禁用」就是绿的。
+    private func markerActive(_ button: RemoteButtonDefinition) -> Bool {
+        guard button.remappable else { return false }
+        if button.voiceControlled { return true }
+        return mappings.target(for: button, remote: selectedDevice) != .disabled
     }
 }
 
@@ -955,15 +974,23 @@ private struct MappingRow: View {
     let remote: SupportedRemoteID
     let button: RemoteButtonDefinition
     let enabled: Bool
+    /// 图上对应的编号；锚点定位不到的键为 nil（这一行不带编号）。
+    var badgeNumber: Int?
+    var badgeSide: MappingBadgeSide = .leading
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 5) {
+            if badgeSide == .leading, let badgeNumber {
+                badge(badgeNumber)
+            }
             Image(systemName: button.symbol)
-                .frame(width: 18)
+                .frame(width: 15)
                 .foregroundStyle(button.voiceControlled ? ConsoleTheme.green : ConsoleTheme.secondary)
             Text(button.title)
-                .font(.system(size: 11.5, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(ConsoleTheme.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
                 .frame(width: 76, alignment: .leading)
             Spacer(minLength: 4)
             if !button.remappable {
@@ -1001,7 +1028,7 @@ private struct MappingRow: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 142)
+                    .frame(width: 116)
                     if mappings.target(for: button, remote: remote) == .custom {
                         Button { showRecorder = true } label: {
                             Image(systemName: "record.circle")
@@ -1019,8 +1046,11 @@ private struct MappingRow: View {
                     }
                 }
             }
+            if badgeSide == .trailing, let badgeNumber {
+                badge(badgeNumber)
+            }
         }
-        .frame(height: 28)
+        .frame(height: 32)
         .padding(.horizontal, 9)
         .background(ConsoleTheme.surface2)
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -1039,6 +1069,26 @@ private struct MappingRow: View {
                 }
             )
         }
+    }
+
+    /// 行尾/行首的编号徽章：跟图上圆点同号，颜色跟着映射状态走。
+    private func badge(_ number: Int) -> some View {
+        let color = badgeColor
+        return Text("\(number)")
+            .font(.system(size: 9.5, weight: .bold))
+            .foregroundStyle(color)
+            .frame(width: 14, height: 14)
+            .background(Circle().fill(ConsoleTheme.black.opacity(0.9)))
+            .overlay(Circle().stroke(color, lineWidth: 1))
+            .fixedSize()
+    }
+
+    private var badgeColor: Color {
+        guard button.remappable else { return ConsoleTheme.tertiary }
+        if button.voiceControlled { return ConsoleTheme.green }
+        return mappings.target(for: button, remote: remote) == .disabled
+            ? ConsoleTheme.tertiary
+            : ConsoleTheme.green
     }
 
     private var currentTarget: RemoteMappingTarget {
@@ -1219,24 +1269,47 @@ private final class KeyboardCaptureNSView: NSView {
     }
 }
 
-private struct RemoteProductImage: View {
+/// 图上一个按键的编号点。
+struct RemoteImageMarker: Identifiable {
+    let buttonID: String
+    let number: Int
+    let anchor: CGPoint
+    /// 映射没被「禁用」→ 绿点；禁用/设备内部功能 → 灰点。
+    let active: Bool
+
+    var id: String { buttonID }
+}
+
+/// 遥控器产品图 + 编号圆点。两张图都按固定高度等比绘制，宽度随比例自适应，
+/// 保证等高；锚点按实际绘制矩形换算，跟 `RemoteAnchors` 里的归一化坐标对应。
+private struct RemoteImageWithMarkers: View {
     let kind: SupportedRemoteID
+    let markers: [RemoteImageMarker]
+    let height: CGFloat
+    let width: CGFloat
 
     var body: some View {
         Group {
             if let image = RemoteImageAsset.image(for: kind) {
-                if kind == .chromecast {
+                let ratio = image.size.height > 0
+                    ? image.size.width / image.size.height
+                    : 0.34
+                let drawnWidth = height * ratio
+                let originX = (width - drawnWidth) / 2
+                ZStack(alignment: .topLeading) {
                     Image(nsImage: image)
                         .resizable()
                         .interpolation(.high)
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 112, height: 304)
-                } else {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 92, height: 260)
+                        .frame(width: drawnWidth, height: height)
+                        .offset(x: originX)
+                    ForEach(markers) { marker in
+                        markerView(marker, drawnWidth: drawnWidth)
+                            .position(
+                                x: originX + marker.anchor.x * drawnWidth,
+                                y: marker.anchor.y * height
+                            )
+                    }
                 }
             } else {
                 Label(
@@ -1246,13 +1319,41 @@ private struct RemoteProductImage: View {
                 .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(ConsoleTheme.secondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(width: width, height: height)
             }
         }
-        .frame(height: kind == .chromecast ? 304 : 260)
+        .frame(width: width, height: height)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(kind.title)
     }
+
+    /// 小圆点贴在按键上，编号圆朝图片外侧偏一点，避免盖住机身和相邻编号。
+    private func markerView(
+        _ marker: RemoteImageMarker,
+        drawnWidth: CGFloat
+    ) -> some View {
+        let color = marker.active ? ConsoleTheme.green : ConsoleTheme.tertiary
+        let outward: CGFloat = marker.anchor.x < 0.5 ? -1 : 1
+        return ZStack {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text("\(marker.number)")
+                .font(.system(size: 9.5, weight: .bold))
+                .foregroundStyle(color)
+                .frame(width: 15, height: 15)
+                .background(Circle().fill(ConsoleTheme.black.opacity(0.92)))
+                .overlay(Circle().stroke(color, lineWidth: 1))
+                .offset(x: outward * 11)
+        }
+        .fixedSize()
+    }
+}
+
+/// 按键行里的编号徽章朝哪一侧——左侧栏朝右（图片方向），右侧栏朝左。
+enum MappingBadgeSide {
+    case leading
+    case trailing
 }
 
 /// 音频流水线上的一段。三段共用同一路音频，各自的门控值由调用方算好
