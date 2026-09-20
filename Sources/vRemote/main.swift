@@ -199,7 +199,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             )
         }
         x6BLE.onLevel = { [weak self] db, _ in
-            guard AudioPipe.shared.isRemoteInputEnabled else { return }
             self?.debugWindow.updateRemoteLevel(db)
         }
         chromecastHID.onConnectionChanged = { [weak self] connected in
@@ -256,7 +255,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             )
         }
         chromecastBLE.onLevel = { [weak self] db, _ in
-            guard AudioPipe.shared.isRemoteInputEnabled else { return }
             self?.debugWindow.updateRemoteLevel(db)
         }
         x6Session.preferredRemoteProvider = { [weak self] in
@@ -267,10 +265,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         x6Session.onMicrophoneOpenRequested = {
             [weak self] remote, bypassDebounce in
-            guard AudioPipe.shared.isRemoteInputEnabled else {
-                print("[AUDIO] 遥控器未勾选，跳过主动开麦")
-                return .unavailable
-            }
             return self?.openRemoteMicrophone(
                 remote,
                 bypassDebounce: bypassDebounce
@@ -454,7 +448,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             hidConnected: anyHID,
             bleConnected: anyBLE,
             remoteStreaming: remoteStreaming,
-            remoteInputEnabled: AudioPipe.shared.isRemoteInputEnabled,
+            routeActive: AudioPipe.shared.isRemoteRouteActive,
             doubaoIsRecording: doubaoIsRecording,
             doubaoInput: doubaoSnapshot.deviceSummary,
             driverAvailable: AudioPipe.shared.isOutputDeviceAvailable,
@@ -491,19 +485,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         debugWindow.onRestartApp = { [weak self] in
             self?.restartAppNow()
-        }
-        debugWindow.onRemoteInputEnabledChanged = { [weak self] enabled in
-            let audio = AudioPipe.shared
-            audio.setInputEnabled(remote: enabled)
-            if !enabled {
-                self?.x6BLE.closeMicrophone(force: true)
-                self?.chromecastBLE.closeMicrophone(force: true)
-                self?.debugWindow.updateRemoteLevel(-120)
-            } else if let snapshot = self?.doubaoAudioState.snapshotNow(),
-                      Self.doubaoIsRecording(snapshot) {
-                self?.openPreferredRemoteMicrophone()
-            }
-            self?.updateStatus()
         }
         debugWindow.onInputTriggerChanged = { [weak self] in
             self?.x6SearchSuppressor.triggerConfigurationDidChange()
@@ -631,11 +612,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 bypassDebounce: bypassDebounce
             )
         }
-    }
-
-    private func openPreferredRemoteMicrophone() {
-        guard let remote = preferredVoiceRemote() else { return }
-        _ = openRemoteMicrophone(remote, bypassDebounce: false)
     }
 
     private func closeAllRemoteMicrophones() {

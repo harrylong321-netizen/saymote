@@ -2,7 +2,6 @@ import Foundation
 
 enum AppStorage {
     static let loggingEnabledKey = "loggingEnabled"
-    static let remoteInputEnabledKey = "remoteInputEnabled"
     static let inputTriggerKeyKey = "inputTriggerKey"
 
     static let logsDirectory: URL = {
@@ -20,7 +19,6 @@ enum AppStorage {
     static func prepare() {
         UserDefaults.standard.register(defaults: [
             loggingEnabledKey: false,
-            remoteInputEnabledKey: true,
             inputTriggerKeyKey: InputTriggerKey.option.rawValue,
         ])
         ensureDirectory(logsDirectory)
@@ -34,10 +32,6 @@ enum AppStorage {
         set { UserDefaults.standard.set(newValue, forKey: loggingEnabledKey) }
     }
 
-    static var remoteInputEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: remoteInputEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: remoteInputEnabledKey) }
-    }
 
     static var inputTriggerKey: InputTriggerKey {
         get {

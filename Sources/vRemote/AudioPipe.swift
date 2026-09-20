@@ -25,7 +25,6 @@ final class AudioPipe: NSObject {
 
     private let stateLock = NSLock()
     private var mixActive = false
-    private var remoteInputEnabled = AppStorage.remoteInputEnabled
     private var outputDeviceID: AudioDeviceID?
     private var outputIOProcID: AudioDeviceIOProcID?
 
@@ -65,8 +64,7 @@ final class AudioPipe: NSObject {
 
     func feed(samples: [Int16], inputSampleRate: Double = 16_000) {
         guard !samples.isEmpty else { return }
-        let state = inputState
-        guard state.mixActive, state.remoteEnabled else { return }
+        guard isMixActive else { return }
         onRemoteAudioArrived?()
         let floatSamples = samples.map { sample -> Float in
             let amplified = Float(sample) / 32768.0 * Self.remoteGain
@@ -101,25 +99,8 @@ final class AudioPipe: NSObject {
         onRouteChanged?(active)
     }
 
-    func setInputEnabled(remote: Bool) {
-        stateLock.lock()
-        let remoteChanged = remoteInputEnabled != remote
-        remoteInputEnabled = remote
-        if !remote {
-            pendingRemote.removeAll(keepingCapacity: true)
-            pendingRemoteIndex = 0
-        }
-        stateLock.unlock()
-
-        AppStorage.remoteInputEnabled = remote
-
-        if remoteChanged {
-            print("[AUDIO] 遥控器输入更新 · \(remote ? "ON" : "OFF")")
-            onRouteChanged?(mixActive)
-        }
-    }
-
-    var isRemoteInputEnabled: Bool { inputState.remoteEnabled }
+    /// 遥控器音频通路是否开着（App 正把遥控器的采样写进虚拟声卡）。
+    var isRemoteRouteActive: Bool { isMixActive }
     var isOutputDeviceAvailable: Bool { outputDeviceID != nil }
 
     func stop() {
@@ -146,12 +127,6 @@ final class AudioPipe: NSObject {
         return mixActive
     }
 
-    private var inputState: (mixActive: Bool, remoteEnabled: Bool) {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        return (mixActive, remoteInputEnabled)
-    }
-
     private func schedule(
         monoSamples: [Float],
         sampleRate: Double
@@ -165,7 +140,7 @@ final class AudioPipe: NSObject {
         guard !resampled.isEmpty else { return }
 
         stateLock.lock()
-        guard mixActive, remoteInputEnabled else {
+        guard mixActive else {
             stateLock.unlock()
             return
         }

@@ -224,7 +224,8 @@ private final class ConsoleViewModel: ObservableObject {
     @Published var hidConnected = false
     @Published var bleConnected = false
     @Published var remoteStreaming = false
-    @Published var remoteInputEnabled = true
+    /// 遥控器音频通路是否开着（App 正在把遥控器采样写进虚拟声卡）。
+    @Published var routeActive = false
     @Published var doubaoIsRecording = false
     @Published var doubaoInput = "--"
     @Published var driverAvailable = false
@@ -242,7 +243,6 @@ private final class ConsoleViewModel: ObservableObject {
 
     var onStopMicrophone: (() -> Void)?
     var onRestartApp: (() -> Void)?
-    var onRemoteInputEnabledChanged: ((Bool) -> Void)?
     var onInputTriggerChanged: (() -> Void)?
     var onRemoteMappingEnabledChanged: ((SupportedRemoteID, Bool) -> Void)?
 
@@ -258,12 +258,6 @@ private final class ConsoleViewModel: ObservableObject {
     func setRemoteMappingEnabled(_ enabled: Bool, remote: SupportedRemoteID) {
         RemoteMappingStore.shared.setEnabled(enabled, for: remote)
         onRemoteMappingEnabledChanged?(remote, enabled)
-    }
-
-    func toggleRemoteMute() {
-        let next = !remoteInputEnabled
-        remoteInputEnabled = next
-        onRemoteInputEnabledChanged?(next)
     }
 
     func refreshPermissions() {
@@ -334,7 +328,6 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
 
     var onStopMicrophone: (() -> Void)?
     var onRestartApp: (() -> Void)?
-    var onRemoteInputEnabledChanged: ((Bool) -> Void)?
     var onInputTriggerChanged: (() -> Void)?
     var onRemoteMappingEnabledChanged: ((SupportedRemoteID, Bool) -> Void)?
 
@@ -369,9 +362,6 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
 
         model.onStopMicrophone = { [weak self] in self?.onStopMicrophone?() }
         model.onRestartApp = { [weak self] in self?.onRestartApp?() }
-        model.onRemoteInputEnabledChanged = { [weak self] enabled in
-            self?.onRemoteInputEnabledChanged?(enabled)
-        }
         model.onInputTriggerChanged = { [weak self] in
             self?.onInputTriggerChanged?()
         }
@@ -405,7 +395,7 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
         hidConnected: Bool,
         bleConnected: Bool,
         remoteStreaming: Bool,
-        remoteInputEnabled: Bool,
+        routeActive: Bool,
         doubaoIsRecording: Bool,
         doubaoInput: String,
         driverAvailable: Bool,
@@ -419,7 +409,7 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
             self.model.hidConnected = hidConnected
             self.model.bleConnected = bleConnected
             self.model.remoteStreaming = remoteStreaming
-            self.model.remoteInputEnabled = remoteInputEnabled
+            self.model.routeActive = routeActive
             self.model.doubaoIsRecording = doubaoIsRecording
             self.model.doubaoInput = doubaoInput
             self.model.driverAvailable = driverAvailable
@@ -547,21 +537,76 @@ private struct StudioMixerView: View {
 
     private var mixer: some View {
         HStack(spacing: 0) {
-            InputChannelView(
+            AudioStageCard(
                 title: L10n.text("遥控器麦克风", "Remote Mic"),
                 subtitle: L10n.text("蓝牙语音遥控器", "Bluetooth Voice Remote"),
+                stateText: remoteMicState.text,
+                stateColor: remoteMicState.color,
                 db: model.remoteLevelDB,
-                enabled: model.remoteInputEnabled,
-                showTestHint: model.showX6MicHint && model.hidConnected && model.bleConnected,
-                onMute: model.toggleRemoteMute
+                meterColor: ConsoleTheme.green,
+                showTestHint: model.showX6MicHint && model.hidConnected && model.bleConnected
             )
-            .frame(maxWidth: .infinity)
-            Divider().overlay(ConsoleTheme.lineSoft)
-            OutputChannelView(model: model)
-                .frame(width: 284)
+            PipelineArrow()
+            AudioStageCard(
+                title: L10n.text("虚拟声卡", "Virtual sound card"),
+                subtitle: "vRemoteDr 2ch",
+                stateText: virtualDeviceState.text,
+                stateColor: virtualDeviceState.color,
+                db: virtualDeviceLevelDB,
+                meterColor: ConsoleTheme.amber
+            )
+            PipelineArrow()
+            AudioStageCard(
+                title: L10n.text("音频输出", "Audio Output"),
+                subtitle: L10n.text("发送给豆包", "Sent to Doubao"),
+                stateText: outputState.text,
+                stateColor: outputState.color,
+                db: doubaoLevelDB,
+                meterColor: ConsoleTheme.amber
+            )
         }
-        .background(panelBackground(ConsoleTheme.surface2, radius: 19))
-        .clipped()
+    }
+
+    // 三段看的是同一路音频，区别在门控：左=遥控器回来的原始电平，
+    // 中=真正写进虚拟声卡的电平（通路没开/驱动缺失时归零），
+    // 右=豆包实际读到的电平（豆包没读它就归零）。一眼能看出断在哪一段。
+    private var remoteMicState: (text: String, color: Color) {
+        model.remoteLevelDB > -100
+            ? (L10n.text("有声音", "Active"), ConsoleTheme.green)
+            : (L10n.text("无声", "Silent"), ConsoleTheme.tertiary)
+    }
+
+    private var virtualDeviceState: (text: String, color: Color) {
+        if !model.driverAvailable {
+            return (L10n.text("未安装", "Not installed"), ConsoleTheme.red)
+        }
+        return model.routeActive
+            ? (L10n.text("正在写入", "Writing"), ConsoleTheme.amber)
+            : (L10n.text("空闲", "Idle"), ConsoleTheme.tertiary)
+    }
+
+    private var virtualDeviceLevelDB: Double {
+        model.driverAvailable && model.routeActive ? model.remoteLevelDB : -120
+    }
+
+    private var outputState: (text: String, color: Color) {
+        if !model.driverAvailable {
+            return (L10n.text("未输出", "No output"), ConsoleTheme.red)
+        }
+        if model.doubaoIsRecording {
+            return model.doubaoUsesVRemote
+                ? (L10n.text("豆包正在接收", "Doubao is receiving"),
+                   ConsoleTheme.amber)
+                : (L10n.text("豆包没读它", "Doubao is not using it"),
+                   ConsoleTheme.red)
+        }
+        return (L10n.text("等待录音", "Waiting"), ConsoleTheme.tertiary)
+    }
+
+    private var doubaoLevelDB: Double {
+        model.doubaoIsRecording && model.doubaoUsesVRemote
+            ? virtualDeviceLevelDB
+            : -120
     }
 
     private var statusPanel: some View {
@@ -1210,190 +1255,119 @@ private struct RemoteProductImage: View {
     }
 }
 
-private struct InputChannelView: View {
+/// 音频流水线上的一段。三段共用同一路音频，各自的门控值由调用方算好
+/// （见 StudioMixerView 的 remoteMicState / virtualDeviceState / outputState）。
+private struct AudioStageCard: View {
     let title: String
     let subtitle: String
+    let stateText: String
+    let stateColor: Color
     let db: Double
-    let enabled: Bool
+    let meterColor: Color
     var showTestHint = false
-    let onMute: () -> Void
+
+    // 控制台内容宽 735，去掉两条 20 的箭头列后每块约 231，左右各 18 内边距
+    // 还剩约 195：12 格 × 12pt 加间距正好 188，既不挤也不空。
+    private static let meterCount = 12
+    private static let meterBarWidth: CGFloat = 12
+    private static let meterWidth: CGFloat =
+        CGFloat(meterCount) * meterBarWidth + CGFloat(meterCount - 1) * 4
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(title)
-                .font(.system(size: 19, weight: .semibold))
-                .foregroundStyle(enabled ? ConsoleTheme.text : ConsoleTheme.tertiary)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(ConsoleTheme.text)
                 .lineLimit(1)
+                .minimumScaleFactor(0.8)
             Text(subtitle)
-                .font(.system(size: 13))
-                .foregroundStyle(enabled ? ConsoleTheme.secondary : ConsoleTheme.tertiary)
+                .font(.system(size: 12))
+                .foregroundStyle(ConsoleTheme.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .padding(.top, 4)
+            // 标题在上面、实时状态和电平贴着底部，中间留白——三段并排时
+            // 视线正好落在下方那条电平带上。
+            Spacer(minLength: 8)
             HStack(spacing: 6) {
                 Circle()
-                    .fill(enabled ? ConsoleTheme.green : ConsoleTheme.tertiary)
-                    .frame(width: 10, height: 10)
-                Text(enabled
-                    ? L10n.text("有声音", "Active")
-                    : L10n.text("已静音", "Muted"))
+                    .fill(stateColor)
+                    .frame(width: 8, height: 8)
+                Text(stateText)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(enabled ? ConsoleTheme.secondary : ConsoleTheme.tertiary)
-                Spacer()
+                    .foregroundStyle(stateColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 4)
                 Text(dbText)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(ConsoleTheme.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
-            .padding(.top, 15)
-            MeterView(db: enabled ? db : -120, color: ConsoleTheme.green, count: 10)
-                .padding(.top, showTestHint ? 35 : 15)
-                .overlay(alignment: .topLeading) {
-                    if showTestHint {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.down")
-                            Text(L10n.text(
-                                "按一下遥控器麦克风键测试",
-                                "Press the remote mic button"
-                            ))
-                                .lineLimit(1)
-                        }
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(ConsoleTheme.text)
-                        .padding(.horizontal, 9)
-                        .frame(height: 25)
-                        .background(ConsoleTheme.black.opacity(0.96))
-                        .clipShape(RoundedRectangle(cornerRadius: 7))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 7)
-                                .stroke(ConsoleTheme.green.opacity(0.8), lineWidth: 1)
-                        )
-                        .offset(y: -1)
+            .padding(.top, 14)
+            MeterView(
+                db: db,
+                color: meterColor,
+                count: Self.meterCount,
+                barWidth: Self.meterBarWidth
+            )
+            .padding(.top, showTestHint ? 34 : 16)
+            .overlay(alignment: .topLeading) {
+                if showTestHint {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down")
+                        Text(L10n.text(
+                            "按一下遥控器麦克风键测试",
+                            "Press the remote mic button"
+                        ))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                     }
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(ConsoleTheme.text)
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .background(ConsoleTheme.black.opacity(0.96))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(ConsoleTheme.green.opacity(0.8), lineWidth: 1)
+                    )
+                    .offset(y: -1)
                 }
+            }
             HStack {
                 Text(L10n.text("低", "Low"))
                 Spacer()
                 Text(L10n.text("高", "High"))
             }
-            .font(.system(size: 11))
+            .font(.system(size: 10))
             .foregroundStyle(ConsoleTheme.tertiary)
-            .frame(width: 141)
+            .frame(width: Self.meterWidth)
             .padding(.top, 6)
-            HStack(spacing: 8) {
-                Button(
-                    enabled
-                        ? L10n.text("静音", "Mute")
-                        : L10n.text("启用", "Enable"),
-                    action: onMute
-                )
-                    .buttonStyle(ConsoleButtonStyle(
-                        tone: enabled ? .neutral : .error,
-                        consoleSized: true
-                    ))
-            }
-            .padding(.top, 31)
-            HStack(spacing: 4) {
-                Text(enabled
-                    ? L10n.text("输入已开启", "Input on")
-                    : L10n.text("输入已关闭", "Input off"))
-                Spacer()
-            }
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(enabled ? ConsoleTheme.secondary : ConsoleTheme.tertiary)
-            .padding(.top, 22)
+            Spacer().frame(height: 22)
         }
-        .padding(.horizontal, 23)
-        .padding(.top, 23)
+        .padding(.horizontal, 18)
+        .padding(.top, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .opacity(enabled ? 1 : 0.58)
+        .background(panelBackground(ConsoleTheme.surface2, radius: 19))
     }
 
     private var dbText: String {
-        guard enabled, db > -100 else { return "−∞" }
+        guard db > -100 else { return "−∞" }
         return String(format: "%.0f dB", db)
     }
 }
 
-private struct OutputChannelView: View {
-    @ObservedObject var model: ConsoleViewModel
-
+/// 两块之间表示音频流向的小箭头。
+private struct PipelineArrow: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(L10n.text("音频输出", "Audio Output"))
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(ConsoleTheme.text)
-            Text(L10n.text("发送给豆包", "Sent to Doubao"))
-                .font(.system(size: 13))
-                .foregroundStyle(ConsoleTheme.secondary)
-                .padding(.top, 4)
-            HStack(spacing: 6) {
-                Circle().fill(outputError ? ConsoleTheme.red : ConsoleTheme.amber)
-                    .frame(width: 10, height: 10)
-                Text(outputError
-                    ? L10n.text("未输出", "No output")
-                    : model.remoteStreaming
-                        ? L10n.text("正在输出", "Sending")
-                        : L10n.text("等待录音", "Waiting"))
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(outputError ? ConsoleTheme.red : ConsoleTheme.amber)
-                Spacer()
-                Text(outputError ? "−∞" : "−9 dB")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(ConsoleTheme.secondary)
-            }
-            .padding(.top, 15)
-            MeterView(
-                db: outputError ? -120 : model.remoteLevelDB,
-                color: ConsoleTheme.amber,
-                count: 14
-            )
-            .padding(.top, 15)
-            HStack {
-                Text(L10n.text("低", "Low"))
-                Spacer()
-                Text(L10n.text("高", "High"))
-            }
-            .font(.system(size: 11))
+        Image(systemName: "chevron.right")
+            .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(ConsoleTheme.tertiary)
-            .frame(width: 188)
-            .padding(.top, 6)
-            HStack(spacing: 8) {
-                Circle().fill(ConsoleTheme.amber).frame(width: 10, height: 10)
-                Text(L10n.text("遥控器麦克风", "Remote mic"))
-                    .font(.system(
-                        size: AppLanguage.selected.usesEnglish ? 11 : 14,
-                        weight: .semibold
-                    ))
-                    .foregroundStyle(ConsoleTheme.amber)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                Spacer()
-                Text(L10n.text("虚拟声卡", "Virtual sound card"))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(ConsoleTheme.text)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-            .padding(.horizontal, 15)
-            .frame(height: 60)
-            .background(panelBackground(ConsoleTheme.surface, radius: 14))
-            .padding(.top, 25)
-            Text(outputError
-                ? L10n.text("等待音频链路恢复", "Waiting for audio route")
-                : L10n.text("豆包正在接收", "Doubao is receiving"))
-                .font(.system(size: 11))
-                .foregroundStyle(outputError ? ConsoleTheme.red : ConsoleTheme.secondary)
-                .padding(.top, 15)
-        }
-        .padding(.horizontal, 23)
-        .padding(.top, 23)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(ConsoleTheme.amberDeep)
-        .overlay(alignment: .top) {
-            Rectangle().fill(ConsoleTheme.amber).frame(height: 3)
-        }
-    }
-
-    private var outputError: Bool {
-        !model.driverAvailable || (model.doubaoIsRecording && !model.doubaoUsesVRemote)
+            .frame(width: 20)
+            .frame(maxHeight: .infinity)
     }
 }
 
@@ -1401,13 +1375,14 @@ private struct MeterView: View {
     let db: Double
     let color: Color
     let count: Int
+    var barWidth: CGFloat = 13
 
     var body: some View {
         HStack(spacing: 4) {
             ForEach(0..<count, id: \.self) { index in
                 RoundedRectangle(cornerRadius: 2)
                     .fill(index < activeCount ? color : ConsoleTheme.black)
-                    .frame(width: count > 10 ? 13 : 14, height: 21)
+                    .frame(width: barWidth, height: 21)
             }
         }
     }
