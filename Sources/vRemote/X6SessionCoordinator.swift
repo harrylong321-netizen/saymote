@@ -512,6 +512,14 @@ final class X6SessionCoordinator {
             // kAudioProcessPropertyIsRunningInput，因此这里会长期为
             // unavailable。此时若按“未录音”处理，会在用户刚开始说话时
             // 就把会话关掉，故保持已打开的会话，交给用户手势关闭。
+            //
+            // 反过来，如果设备列表显示豆包确实在录音、而 App 还停在“已关闭”，
+            // 说明豆包在 App 之外被打开了（或者上次的关闭点击没生效）。
+            // 这时要跟上去，否则 App 会一直是关闭状态，按键看起来没反应。
+            if snapshot.hasInputDevice, phase == .closed {
+                adoptExternalActivation(snapshot)
+                return
+            }
             if phase == .open {
                 publish("豆包录音中 · 无法校验")
                 break
@@ -595,6 +603,19 @@ final class X6SessionCoordinator {
 
     private func closeRecognitionFromRemote(reason: String) {
         guard phase == .opening || phase == .open else {
+            // App 自己的阶段是「已关闭」，但豆包可能仍在录音——例如上一次
+            // 关闭点击没被豆包接收，或者豆包在 App 之外被打开了。这时用户按
+            // 这一下就是想停止录音，不能直接忽略（忽略会让按键看起来完全没反应，
+            // 而且用户再也停不下来）。以豆包的真实状态为准：确实在录就补一次点击。
+            if trustedDoubaoRecording() == true {
+                print(
+                    "[VOICE-SESSION] \(reason)：App 处于已关闭但豆包仍在录音，" +
+                    "补一次点击停止它"
+                )
+                tapTrigger()
+                finalizeClosed(reason: "\(reason) recovered while closed")
+                return
+            }
             print(
                 "[VOICE-SESSION] \(reason) ignored phase=\(phase.rawValue)"
             )
