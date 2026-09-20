@@ -1,7 +1,7 @@
 // vRemote audio pipe.
 //
 // X6 / Chromecast ATVV ADPCM -> decoded Int16 PCM -> vRemoteDr 2ch
-// （设备在系统里的名字是 vRemoteDr 2ch，vRemoter 界面里显示为「遥控器麦克风」）
+// （设备在系统里的名字是 vRemoteDr 2ch，vRemoter 界面里显示为「虚拟声卡」）
 //
 // 本版本只保留遥控器麦克风通路：MacBook 内置麦克风已移除，
 // 因此不再有采集会话、双麦混音与延迟对齐。

@@ -67,8 +67,8 @@ enum PermissionKind: String, Identifiable, CaseIterable {
                     "Open Voice Input, locate Microphone Selection, and click the current option."
                 ),
                 L10n.text(
-                    "选择“遥控器麦克风”（豆包列表里这一项显示为 vRemoteDr 2ch）。",
-                    "Select “Remote microphone” (listed as vRemoteDr 2ch in Doubao's list)."
+                    "选择“虚拟声卡”（豆包列表里这一项显示为 vRemoteDr 2ch）。",
+                    "Select “Virtual sound card” (listed as vRemoteDr 2ch in Doubao's list)."
                 ),
                 L10n.text(
                     "不要选“自动检测”。实测它不会跟随 vRemoter 切换，往往一直用内置麦克风，而且选上之后短按关不掉录音。",
@@ -570,8 +570,8 @@ private struct StudioMixerView: View {
                 title: L10n.text("豆包输入设备", "Doubao input"),
                 value: model.doubaoIsRecording
                     ? (model.doubaoUsesVRemote
-                        ? L10n.text("遥控器麦克风 · 录音中",
-                                    "Remote microphone · Recording")
+                        ? L10n.text("虚拟声卡 · 录音中",
+                                    "Virtual sound card · Recording")
                         : model.doubaoInput)
                     : L10n.text("当前未录音", "Not recording"),
                 tone: model.doubaoIsRecording && !model.doubaoUsesVRemote ? .error : .good,
@@ -583,8 +583,8 @@ private struct StudioMixerView: View {
             StatusRow(
                 title: L10n.text("音频驱动", "Audio driver"),
                 value: model.driverAvailable
-                    ? L10n.text("遥控器麦克风可用",
-                                "Remote microphone available")
+                    ? L10n.text("虚拟声卡可用",
+                                "Virtual sound card available")
                     : L10n.text("未安装或需要修复", "Missing or needs repair"),
                 tone: model.driverAvailable ? .good : .error,
                 action: model.driverAvailable ? nil : L10n.text("打开声音", "Open Sound"),
@@ -625,13 +625,13 @@ private struct StudioMixerView: View {
     private var x6Value: String {
         if model.hidConnected && model.bleConnected {
             return model.remoteStreaming
-                ? L10n.text("HID · BLE · 语音流传输中", "HID · BLE · Streaming")
-                : L10n.text("HID · BLE 已就绪", "HID · BLE ready")
+                ? L10n.text("遥控器麦克风传输中", "Remote mic streaming")
+                : L10n.text("遥控器麦克风已就绪", "Remote mic ready")
         }
         if model.hidConnected || model.bleConnected {
-            return L10n.text("正在连接语音服务", "Connecting voice service")
+            return L10n.text("遥控器麦克风连接中", "Connecting remote mic")
         }
-        return L10n.text("HID 与 BLE 未连接", "HID and BLE disconnected")
+        return L10n.text("遥控器麦克风未连接", "Remote mic not connected")
     }
 }
 
@@ -1357,7 +1357,7 @@ private struct OutputChannelView: View {
             .padding(.top, 6)
             HStack(spacing: 8) {
                 Circle().fill(ConsoleTheme.amber).frame(width: 10, height: 10)
-                Text(L10n.text("两路已合并", "Inputs mixed"))
+                Text(L10n.text("遥控器麦克风", "Remote mic"))
                     .font(.system(
                         size: AppLanguage.selected.usesEnglish ? 11 : 14,
                         weight: .semibold
@@ -1366,7 +1366,7 @@ private struct OutputChannelView: View {
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
                 Spacer()
-                Text(L10n.text("遥控器麦克风", "Remote microphone"))
+                Text(L10n.text("虚拟声卡", "Virtual sound card"))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(ConsoleTheme.text)
                     .lineLimit(1)
