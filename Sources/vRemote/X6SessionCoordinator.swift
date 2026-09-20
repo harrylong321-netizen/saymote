@@ -48,6 +48,10 @@ final class X6SessionCoordinator {
     private struct PhysicalVoiceGesture {
         let beganAt: Date
         let recognitionWasOpen: Bool
+        /// 豆包在录音、但用的不是我们的虚拟声卡（例如内置麦克风）。
+        /// 这种情况下这一按只接管路由、不点豆包——让豆包的「自动检测」
+        /// 自己把输入切到遥控器，抬起时也不该补点。
+        let switchOnly: Bool
         let generation: UInt64
     }
 
@@ -170,13 +174,47 @@ final class X6SessionCoordinator {
         }
 
         if supportsPhysicalHoldGesture, reason == 0x03 {
+            let recording = trustedDoubaoRecording()
+
+            // 情况三：豆包正在录音，但用的不是我们的虚拟声卡（例如内置麦克风）。
+            // 这一下不该点豆包（那会把它关掉），只把我们的路由打开，
+            // 让豆包的「自动检测」按“哪个设备在用”自己切到遥控器。
+            if recording == true, trustedDoubaoUsesVRemote() == false {
+                generation &+= 1
+                cancelScheduledWork()
+                phase = .open
+                owner = .remote
+                sessionRemote = remote
+                activateRemoteRoute()
+                if physicalVoiceGestures[remote] == nil {
+                    physicalVoiceGestures[remote] = PhysicalVoiceGesture(
+                        beganAt: now(),
+                        recognitionWasOpen: true,
+                        switchOnly: true,
+                        generation: generation
+                    )
+                }
+                requestRemoteTransportOpen(
+                    remote,
+                    bypassDebounce: false,
+                    attempt: 1
+                )
+                print(
+                    "[VOICE-SESSION] 豆包在录音但用的不是遥控器麦克风：" +
+                    "只切路由、不点它，等自动检测切过来"
+                )
+                publish("已切到遥控器麦克风")
+                return
+            }
+
             // 「这一下该开还是该关」同样以豆包的真实状态为准；读数不可采信时
             // 才退回 App 自己的阶段记录。
-            let recognitionWasOpen = trustedDoubaoRecording() ?? (phase == .open)
+            let recognitionWasOpen = recording ?? (phase == .open)
             if physicalVoiceGestures[remote] == nil {
                 physicalVoiceGestures[remote] = PhysicalVoiceGesture(
                     beganAt: now(),
                     recognitionWasOpen: recognitionWasOpen,
+                    switchOnly: false,
                     generation: generation
                 )
             }
@@ -246,6 +284,7 @@ final class X6SessionCoordinator {
                 physicalVoiceGestures[remote] = PhysicalVoiceGesture(
                     beganAt: gesture.beganAt,
                     recognitionWasOpen: gesture.recognitionWasOpen,
+                    switchOnly: gesture.switchOnly,
                     generation: generation
                 )
             }
@@ -284,6 +323,15 @@ final class X6SessionCoordinator {
                 print(
                     "[VOICE-SESSION] stale physical release ignored " +
                     "remote=\(remote.rawValue)"
+                )
+                return
+            }
+
+            // 「只切路由」那一按本来就没点豆包，抬起时也不要补点：
+            // 豆包应该继续录着，只是把输入源换成了遥控器。
+            if gesture.switchOnly {
+                print(
+                    "[VOICE-SESSION] switch-only 手势结束，不点豆包"
                 )
                 return
             }
@@ -516,7 +564,12 @@ final class X6SessionCoordinator {
             // 反过来，如果设备列表显示豆包确实在录音、而 App 还停在“已关闭”，
             // 说明豆包在 App 之外被打开了（或者上次的关闭点击没生效）。
             // 这时要跟上去，否则 App 会一直是关闭状态，按键看起来没反应。
-            if snapshot.hasInputDevice, phase == .closed {
+            // 只在豆包用的就是我们的虚拟声卡时才接管：如果它用的是内置麦克风，
+            // 说明用户正在电脑边用电脑麦克风，App 不该抢过来（否则会形成
+            // “豆包一直录、App 一直开路由”的循环）。
+            if snapshot.hasInputDevice,
+               snapshot.inputDeviceNames.contains(Self.vRemoteDeviceName),
+               phase == .closed {
                 adoptExternalActivation(snapshot)
                 return
             }
@@ -966,14 +1019,31 @@ final class X6SessionCoordinator {
     /// macOS 14.2+ 用系统的 `isRunningInput`；这台 macOS 12 上没有该属性，
     /// 改用「豆包进程正占着某个输入设备」来判断——本机实测：两次完整开关
     /// 循环里，设备列表非空 ⟺ 豆包正在录音，读数零抖动。
-    private func trustedDoubaoRecording() -> Bool? {
+    private static let vRemoteDeviceName = "vRemoteDr 2ch"
+
+    /// 可信的豆包状态读数。nil 表示不可采信（绑定不到豆包进程，
+    /// 或者刚发过触发键、状态还没稳定下来）。
+    private func trustedDoubaoSnapshot() -> DoubaoAudioStateMonitor.Snapshot? {
         if let last = lastTriggerTapAt,
            now().timeIntervalSince(last) < Self.tapSettleWindow {
             return nil
         }
         let snapshot = doubaoState.snapshotNow()
         guard snapshot.processObjectID != nil else { return nil }
+        return snapshot
+    }
+
+    private func trustedDoubaoRecording() -> Bool? {
+        guard let snapshot = trustedDoubaoSnapshot() else { return nil }
         return snapshot.isRecording || snapshot.hasInputDevice
+    }
+
+    /// 豆包正在录音，而且用的就是我们的虚拟声卡。返回 false 表示它虽然
+    /// 在录音，但走的是别的麦克风（例如内置麦克风）。
+    private func trustedDoubaoUsesVRemote() -> Bool? {
+        guard let snapshot = trustedDoubaoSnapshot() else { return nil }
+        guard snapshot.isRecording || snapshot.hasInputDevice else { return false }
+        return snapshot.inputDeviceNames.contains(Self.vRemoteDeviceName)
     }
 
     /// 诊断（第一步，只读不写）：记录豆包当前占用的输入设备，用来验证
