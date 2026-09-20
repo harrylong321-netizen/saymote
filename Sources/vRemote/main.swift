@@ -431,13 +431,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let anyBLE = x6BLEConnected || chromecastBLEConnected
         let doubaoSnapshot = doubaoAudioState.snapshotNow()
         let doubaoUsesVRemote = doubaoSnapshot.inputDeviceNames.contains("vRemoteDr 2ch")
-        // macOS 12/13 上 snapshot.isRecording 恒为 false——判断是否在录音的
-        // kAudioProcessPropertyIsRunningInput 是 14.2 才公开的 API，旧系统上
-        // 一定读不到。旧系统只能看设备列表：豆包占着输入设备就等于它在录音
-        // （详见 work/改动总览.md 坑 4）。会话逻辑一直用的是这个口径，UI 之前
-        // 漏了，所以那一行在 macOS 12 上永远是「当前未录音」。
-        let doubaoIsRecording = doubaoSnapshot.isRecording
-            || doubaoSnapshot.hasInputDevice
+        let doubaoIsRecording = Self.doubaoIsRecording(doubaoSnapshot)
         let statusText: String
         if let warning = x6Session.audioWarningText {
             statusText = warning
@@ -470,6 +464,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
     }
 
+    /// 豆包是否正在录音。macOS 12/13 读不到 `kAudioProcessPropertyIsRunningInput`
+    /// （14.2 才公开），`Snapshot.isRecording` 在旧系统上恒为 false，只能看
+    /// 输入设备列表：豆包占着某个输入设备就等于它在录（见 `work/改动总览.md` 坑 4）。
+    /// 会话逻辑 `trustedDoubaoRecording()` 用的就是这个口径，界面必须跟它一致，
+    /// 否则旧系统上状态行永远是「当前未录音」。
+    private static func doubaoIsRecording(
+        _ snapshot: DoubaoAudioStateMonitor.Snapshot
+    ) -> Bool {
+        snapshot.isRecording || snapshot.hasInputDevice
+    }
+
     /// 「遥控器未开麦」这类告警用屏幕下方的浮层提示——菜单栏在窗口多的时候
     /// 根本看不见。用序号判断是不是一条新告警，避免重复弹出。
     private func presentToastIfNeeded() {
@@ -494,7 +499,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.x6BLE.closeMicrophone(force: true)
                 self?.chromecastBLE.closeMicrophone(force: true)
                 self?.debugWindow.updateRemoteLevel(-120)
-            } else if self?.doubaoAudioState.snapshotNow().isRecording == true {
+            } else if let snapshot = self?.doubaoAudioState.snapshotNow(),
+                      Self.doubaoIsRecording(snapshot) {
                 self?.openPreferredRemoteMicrophone()
             }
             self?.updateStatus()
