@@ -518,18 +518,6 @@ final class X6SessionCoordinator {
             // unavailable。此时若按“未录音”处理，会在用户刚开始说话时
             // 就把会话关掉，故保持已打开的会话，交给用户手势关闭。
             //
-            // 反过来，如果设备列表显示豆包确实在录音、而 App 还停在“已关闭”，
-            // 说明豆包在 App 之外被打开了（或者上次的关闭点击没生效）。
-            // 这时要跟上去，否则 App 会一直是关闭状态，按键看起来没反应。
-            // 只在豆包用的就是我们的虚拟声卡时才接管：如果它用的是内置麦克风，
-            // 说明用户正在电脑边用电脑麦克风，App 不该抢过来（否则会形成
-            // “豆包一直录、App 一直开路由”的循环）。
-            if snapshot.hasInputDevice,
-               snapshot.inputDeviceNames.contains(Self.vRemoteDeviceName),
-               phase == .closed {
-                adoptExternalActivation(snapshot)
-                return
-            }
             if phase == .open {
                 publish("豆包录音中 · 无法校验")
                 break
