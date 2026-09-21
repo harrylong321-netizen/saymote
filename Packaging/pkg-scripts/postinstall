@@ -9,12 +9,26 @@ set -u
 /usr/bin/killall -9 coreaudiod 2>/dev/null || true
 /usr/bin/pkill -TERM -x vRemote 2>/dev/null || true
 
+# 早期版本装在 /Applications/vRemote.app。改名后必须清掉旧的那份，
+# 否则系统里会同时存在两条应用记录（权限列表里也会看到旧名字）。
+/bin/rm -rf "/Applications/vRemote.app"
+
 console_user=$(/usr/bin/stat -f '%Su' /dev/console)
 if [[ -n "$console_user" && "$console_user" != "root" ]]; then
   console_uid=$(/usr/bin/id -u "$console_user")
+  # 登录项里如果还指着旧路径，改写指向；App 自己也会按新路径重登记。
+  agent="/Users/$console_user/Library/LaunchAgents/local.simaqingfeng.vRemote.login.plist"
+  if [[ -f "$agent" ]]; then
+    /usr/bin/plutil -replace 'ProgramArguments.1' \
+      -string "/Applications/遥控说.app" "$agent" 2>/dev/null || true
+    /bin/launchctl asuser "$console_uid" \
+      /bin/launchctl bootout "gui/$console_uid" "$agent" 2>/dev/null || true
+    /bin/launchctl asuser "$console_uid" \
+      /bin/launchctl bootstrap "gui/$console_uid" "$agent" 2>/dev/null || true
+  fi
   /bin/launchctl asuser "$console_uid" \
     /usr/bin/sudo -u "$console_user" \
-    /usr/bin/open -n "/Applications/vRemote.app" >/dev/null 2>&1 || true
+    /usr/bin/open -n "/Applications/遥控说.app" >/dev/null 2>&1 || true
 fi
 
 exit 0
