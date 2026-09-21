@@ -408,7 +408,7 @@ private final class ConsoleViewModel: ObservableObject {
 }
 
 final class DebugWindowController: NSWindowController, NSWindowDelegate {
-    private static let windowSize = NSSize(width: 775, height: 748)
+    private static let windowSize = NSSize(width: 775, height: 658)
 
     var onStopMicrophone: (() -> Void)?
     var onRestartApp: (() -> Void)?
@@ -540,30 +540,27 @@ private struct StudioMixerView: View {
             header
                 .frame(height: 68)
             if model.selectedPage == .mixer {
-                Spacer().frame(height: 12)
+                // 两个模块都按内容高度排、行距固定（行间那点空档不摊开），
+                // 剩下的零头留在页面底部，不掺进行距里。
+                Spacer().frame(height: 16)
                 ConsoleSectionHeader(title: L10n.text("系统状态", "System Status"))
-                Spacer().frame(height: 10)
+                Spacer().frame(height: 8)
                 mixer
                     .frame(height: 185)
-                Spacer().frame(height: 22)
+                Spacer().frame(height: 20)
                 ConsoleSectionHeader(title: L10n.text("系统设置", "System Settings"))
-                Spacer().frame(height: 10)
-                // 面板高度吃掉剩下的空间，内部再用 Spacer 把行距均分。
+                Spacer().frame(height: 8)
                 settingsPanel
-                    .frame(maxHeight: .infinity)
-            } else {
-                // 映射页的内容高度是固定的（触发键卡片 + 映射卡按内容排），
-                // 窗口为了「系统设置」页长高之后这里会多出留白——上下均分，
-                // 而不是把卡片拉长（卡片一拉长，行与脚注之间就空一大片）。
                 Spacer(minLength: 0)
+            } else {
                 Spacer().frame(height: 15)
                 KeyMappingView(model: model)
-                    .frame(height: 535)
+                    .frame(height: 512)
                 Spacer(minLength: 0)
             }
         }
         .padding(20)
-        .frame(width: 775, height: 748)
+        .frame(width: 775, height: 658)
         .background(ConsoleTheme.panel)
         .sheet(item: $model.activeModal) { modal in
             switch modal {
@@ -720,9 +717,8 @@ private struct StudioMixerView: View {
     /// 「系统设置」模块：上面几行是状态/权限（只读，出问题给修复入口），
     /// 下面两行是可交互的设置（语言、登录时自动启动）。
     private var settingsPanel: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 6) {
             statusRows
-            Spacer(minLength: 0)
             ConsoleConfigRow(title: L10n.text("语言", "Language")) {
                 ConsolePillMenu(
                     text: languageTitle,
@@ -739,7 +735,6 @@ private struct StudioMixerView: View {
                 )
                 .help(L10n.text("切换语言后会重启 App", "Changing language restarts the app"))
             }
-            Spacer(minLength: 0)
             ConsoleConfigRow(title: L10n.text("登录时自动启动", "Launch at login")) {
                 Toggle(
                     "",
@@ -754,6 +749,7 @@ private struct StudioMixerView: View {
             }
         }
         .padding(.horizontal, 15)
+        .padding(.vertical, 18)
         .background(panelBackground(ConsoleTheme.surface, radius: 19))
     }
 
@@ -761,66 +757,59 @@ private struct StudioMixerView: View {
     /// 免得 ViewBuilder 一层堆超过 10 个子视图。行间用 Spacer 均分空档。
     @ViewBuilder
     private var statusRows: some View {
-        StatusRow(
-            title: L10n.text("豆包输入设备", "Doubao input"),
-            value: model.doubaoIsRecording
-                ? (model.doubaoUsesVRemote
-                    ? L10n.text("虚拟声卡 · 录音中",
-                                "Virtual sound card · Recording")
-                    : model.doubaoInput)
-                : L10n.text("当前未录音", "Not recording"),
-            tone: model.doubaoIsRecording && !model.doubaoUsesVRemote ? .error : .good,
-            action: model.doubaoIsRecording && !model.doubaoUsesVRemote
-                ? L10n.text("设置方法", "Fix settings")
-                : nil,
-            onAction: { model.activeModal = .permission(.doubaoInput) }
-        )
-        // 面板变高后把空档均分到行间，别全堆在底部。
-        Spacer(minLength: 0)
-        StatusRow(
-            title: L10n.text("音频驱动", "Audio driver"),
-            value: model.driverAvailable
-                ? L10n.text("虚拟声卡可用",
-                            "Virtual sound card available")
-                : L10n.text("未安装或需要修复", "Missing or needs repair"),
-            tone: model.driverAvailable ? .good : .error,
-            action: model.driverAvailable ? nil : L10n.text("打开声音", "Open Sound"),
-            onAction: model.openSoundInputSettings
-        )
-        // 面板变高后把空档均分到行间，别全堆在底部。
-        Spacer(minLength: 0)
-        StatusRow(
-            title: L10n.text("遥控器连接", "Remote connection"),
-            value: x6Value,
-            tone: model.hidConnected && model.bleConnected ? .good : .warning,
-            action: model.hidConnected && model.bleConnected
-                ? nil
-                : L10n.text("蓝牙设置", "Bluetooth settings"),
-            onAction: { model.activeModal = .permission(.bluetooth) }
-        )
-        // 面板变高后把空档均分到行间，别全堆在底部。
-        Spacer(minLength: 0)
-        StatusRow(
-            title: L10n.text("辅助功能权限", "Accessibility"),
-            value: model.accessibilityGranted
-                ? L10n.text("已授权", "Granted")
-                : L10n.text("语音键无法正确映射", "Voice key mapping unavailable"),
-            tone: model.accessibilityGranted ? .good : .error,
-            action: model.accessibilityGranted ? nil : L10n.text("去授权", "Grant"),
-            onAction: { model.activeModal = .permission(.accessibility) }
-        )
-        // 面板变高后把空档均分到行间，别全堆在底部。
-        Spacer(minLength: 0)
-        StatusRow(
-            title: L10n.text("输入监控权限", "Input Monitoring"),
-            value: model.inputMonitoringGranted
-                ? L10n.text("已授权", "Granted")
-                : L10n.text("无法监听遥控器语音键", "Cannot monitor remote voice key"),
-            tone: model.inputMonitoringGranted ? .good : .warning,
-            action: model.inputMonitoringGranted ? nil : L10n.text("去授权", "Grant"),
-            onAction: { model.activeModal = .permission(.inputMonitoring) }
-        )
-        Spacer(minLength: 0)
+        VStack(spacing: 6) {
+            StatusRow(
+                title: L10n.text("豆包输入设备", "Doubao input"),
+                value: model.doubaoIsRecording
+                    ? (model.doubaoUsesVRemote
+                        ? L10n.text("虚拟声卡 · 录音中",
+                                    "Virtual sound card · Recording")
+                        : model.doubaoInput)
+                    : L10n.text("当前未录音", "Not recording"),
+                tone: model.doubaoIsRecording && !model.doubaoUsesVRemote ? .error : .good,
+                action: model.doubaoIsRecording && !model.doubaoUsesVRemote
+                    ? L10n.text("设置方法", "Fix settings")
+                    : nil,
+                onAction: { model.activeModal = .permission(.doubaoInput) }
+            )
+            StatusRow(
+                title: L10n.text("音频驱动", "Audio driver"),
+                value: model.driverAvailable
+                    ? L10n.text("虚拟声卡可用",
+                                "Virtual sound card available")
+                    : L10n.text("未安装或需要修复", "Missing or needs repair"),
+                tone: model.driverAvailable ? .good : .error,
+                action: model.driverAvailable ? nil : L10n.text("打开声音", "Open Sound"),
+                onAction: model.openSoundInputSettings
+            )
+            StatusRow(
+                title: L10n.text("遥控器连接", "Remote connection"),
+                value: x6Value,
+                tone: model.hidConnected && model.bleConnected ? .good : .warning,
+                action: model.hidConnected && model.bleConnected
+                    ? nil
+                    : L10n.text("蓝牙设置", "Bluetooth settings"),
+                onAction: { model.activeModal = .permission(.bluetooth) }
+            )
+            StatusRow(
+                title: L10n.text("辅助功能权限", "Accessibility"),
+                value: model.accessibilityGranted
+                    ? L10n.text("已授权", "Granted")
+                    : L10n.text("语音键无法正确映射", "Voice key mapping unavailable"),
+                tone: model.accessibilityGranted ? .good : .error,
+                action: model.accessibilityGranted ? nil : L10n.text("去授权", "Grant"),
+                onAction: { model.activeModal = .permission(.accessibility) }
+            )
+            StatusRow(
+                title: L10n.text("输入监控权限", "Input Monitoring"),
+                value: model.inputMonitoringGranted
+                    ? L10n.text("已授权", "Granted")
+                    : L10n.text("无法监听遥控器语音键", "Cannot monitor remote voice key"),
+                tone: model.inputMonitoringGranted ? .good : .warning,
+                action: model.inputMonitoringGranted ? nil : L10n.text("去授权", "Grant"),
+                onAction: { model.activeModal = .permission(.inputMonitoring) }
+            )
+        }
     }
 
     private var languageTitle: String {
@@ -945,7 +934,6 @@ private struct KeyMappingView: View {
             // ZStack 上，Canvas 按未收窄的宽度算锚点，落点整体偏了 16pt。
             .padding(.top, 6)
             .padding(.horizontal, 16)
-            cardFootnote
         }
         .background(panelBackground(ConsoleTheme.surface, radius: 17))
     }
@@ -1184,18 +1172,6 @@ private struct KeyMappingView: View {
                         .stroke(ConsoleTheme.line, lineWidth: 0.5)
                 )
         }
-    }
-
-    private var cardFootnote: some View {
-        Text(L10n.text(
-            "悬停任意一行，或把鼠标移到图上的按键，两边会一起亮",
-            "Hover a row or a button on the remote to link the two"
-        ))
-            .font(.system(size: 11))
-            .foregroundStyle(ConsoleTheme.tertiary)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.top, 2)
-            .padding(.bottom, 10)
     }
 
     private var deviceConnected: Bool {
@@ -2006,11 +1982,11 @@ private struct ConsoleConfigRow<Content: View>: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(ConsoleTheme.secondary)
                 .frame(width: 145, alignment: .leading)
-            Spacer(minLength: 8)
             content
+            Spacer(minLength: 8)
         }
         .padding(.horizontal, 13)
-        .frame(height: 35)
+        .frame(height: 32)
     }
 }
 
@@ -2074,7 +2050,7 @@ private struct StatusRow: View {
             }
         }
         .padding(.horizontal, 13)
-        .frame(height: 35)
+        .frame(height: 32)
         .background(tone == .good ? Color.clear : color.opacity(0.07))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
@@ -2364,7 +2340,7 @@ private func panelBackground(_ color: Color, radius: CGFloat) -> some View {
 /// 用法：`.build/debug/vRemote --ui-snapshot <输出目录>`
 @MainActor
 enum UISnapshot {
-    private static let pageSize = CGSize(width: 775, height: 748)
+    private static let pageSize = CGSize(width: 775, height: 658)
 
     /// `main.swift` 的顶层代码不是 MainActor，所以这个判断要 nonisolated。
     nonisolated static var isRequested: Bool {
