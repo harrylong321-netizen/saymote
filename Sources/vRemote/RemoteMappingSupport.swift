@@ -876,6 +876,28 @@ enum RemoteMappingLayout {
         return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0))
     }
 
+    /// 「离这个点最近的那个键」，超出 `maxDistance` 就算没指到任何键。
+    ///
+    /// 图上的鼠标跟踪用它决定该亮哪个键。按最近距离判定而不是做一排方形热区：
+    /// 方向盘五个键中心只隔 28pt，方形热区必然重叠，重叠处谁在上面谁抢到事件，
+    /// 会出现「指 A 亮 B」或「指上去没反应」。
+    static func nearestButtonID(
+        to point: CGPoint,
+        lines: [Line],
+        maxDistance: CGFloat
+    ) -> String? {
+        var best: (id: String, distance: CGFloat)?
+        for line in lines {
+            guard let end = line.points.last else { continue }
+            let distance = hypot(end.x - point.x, end.y - point.y)
+            guard distance <= maxDistance else { continue }
+            if best == nil || distance < best!.distance {
+                best = (line.buttonID, distance)
+            }
+        }
+        return best?.id
+    }
+
     private static func geometry(width: CGFloat, imageAspect: CGFloat) -> Geometry {
         let sideWidth = max(0, (width - centerColumnWidth - 2 * columnGap) / 2)
         let imageWidth = imageHeight * imageAspect

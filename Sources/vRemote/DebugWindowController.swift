@@ -734,9 +734,11 @@ private struct KeyMappingView: View {
     @ObservedObject var model: ConsoleViewModel
     @ObservedObject private var mappings = RemoteMappingStore.shared
     @State private var selectedDevice: SupportedRemoteID = .chromecast
-    /// 当前被悬停的行（或图上被悬停的锚点）。只为这一条画连线——
-    /// 15 条线常驻是这一页显乱的根源，而「查某个键对应哪行」本来就是逐个看的动作。
+    /// 当前被悬停的行（或图上被悬停的按键）。行和图上按键共用这一个状态，
+    /// 两边就自动联动。线已全部去掉，对应关系全靠它建立。
     @State private var hoveredButtonID: String?
+    /// 图上跟踪器最近报上来的键，离开时要拿它判断「该不该清」。
+    @State private var lastTrackedID: String?
 
     /// `previewHoverButtonID` 只服务 `--ui-snapshot`：把悬停态也渲染进静态图。
     /// 运行时是 nil，悬停一律由 `.onHover` 驱动。
@@ -780,7 +782,7 @@ private struct KeyMappingView: View {
                         drawFocusMarker(context: context, layout: layout)
                     }
                     .allowsHitTesting(false)
-                    anchorHitZones(layout)
+                    anchorHoverTracker(layout)
                 }
             }
             // 内边距必须加在 GeometryReader **外面**：这样里面拿到的才是收窄后
@@ -828,25 +830,41 @@ private struct KeyMappingView: View {
         }
     }
 
-    /// 图上按键的悬停热区：鼠标移到按键上，对应的行跟着亮。
-    /// 必须撑满整块区域，否则超出自身 frame 的热区收不到鼠标事件。
-    /// 32pt 是按最挤的方向盘（上下两键中心距 28pt）取的：盖得住按键、
-    /// 又尽量少跟旁边的热区抢事件。
-    private func anchorHitZones(_ layout: RemoteMappingLayout.Layout) -> some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(layout.lines, id: \.buttonID) { line in
-                if let end = line.points.last {
-                    Color.clear
-                        .frame(width: 32, height: 32)
-                        .contentShape(Circle())
-                        .offset(x: end.x - 16, y: end.y - 16)
-                        .onHover { hovering in
-                            setHover(hovering ? line.buttonID : nil)
-                        }
-                }
-            }
+    /// 图上的鼠标跟踪：交给 AppKit 拿真实坐标，再算「离哪个锚点最近」。
+    ///
+    /// 为什么不用一排 `onHover` 热区：方向盘五个键中心只隔 28pt，方块热区必然
+    /// 互相重叠，重叠处谁在上面谁抢到事件，跟「指哪亮哪」的直觉对不上；热区做小
+    /// 了又会出现「鼠标在上头也不亮」。按最近距离判定没有这些问题，半径也能给大。
+    ///
+    /// 这个 NSView 只监听鼠标移动，`hitTest` 返回 nil，绝不挡底下行的点击。
+    private func anchorHoverTracker(_ layout: RemoteMappingLayout.Layout) -> some View {
+        let columnLeft = layout.imageOriginX
+            - (RemoteMappingLayout.centerColumnWidth - layout.imageWidth) / 2
+        return AnchorHoverTracker(
+            lines: layout.lines,
+            offsetX: columnLeft,
+            maxDistance: 44,
+            onNearest: handleTrackedHover
+        )
+        .frame(
+            width: RemoteMappingLayout.centerColumnWidth,
+            height: RemoteMappingLayout.imageHeight,
+            alignment: .topLeading
+        )
+        .offset(x: columnLeft)
+    }
+
+    /// 图上跟出来的高亮。离开时只清「自己刚报的那个键」——鼠标从图上划回行的
+    /// 瞬间，行那边可能已经先设好了高亮，这里不能把它抹掉。
+    private func handleTrackedHover(_ id: String?) {
+        let previous = lastTrackedID
+        lastTrackedID = id
+        Log.write("[MAP-HOVER] 图上跟踪 → \(id ?? "无")")
+        guard let id else {
+            if let previous { clearHover(previous) }
+            return
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        setHover(id)
     }
 
     /// 悬停是瞬时反馈：120ms 淡入足够，但「减少动态效果」打开时直接切换。
@@ -859,6 +877,14 @@ private struct KeyMappingView: View {
                 hoveredButtonID = id
             }
         }
+    }
+
+    /// 只有「主动离开的那个键现在还是当前高亮」时才清空。
+    /// 鼠标快速从 A 划到 B 时，B 的进入事件可能先到，如果 A 的离开事件无条件
+    /// 清空，B 的高亮就被抹掉了——「划过不变色」就是这么来的。
+    private func clearHover(_ id: String) {
+        guard hoveredButtonID == id else { return }
+        setHover(nil)
     }
 
     private var triggerPanel: some View {
@@ -1047,7 +1073,12 @@ private struct KeyMappingView: View {
                     enabled: mappings.isEnabled(selectedDevice),
                     isHighlighted: hoveredButtonID == row.button.id,
                     onHover: { hovering in
-                        setHover(hovering ? row.button.id : nil)
+                        // 进入就点亮；离开只清「自己这一条」，见 clearHover。
+                        if hovering {
+                            setHover(row.button.id)
+                        } else {
+                            clearHover(row.button.id)
+                        }
                     }
                 )
                 .frame(height: RemoteMappingLayout.rowHeight)
@@ -1099,6 +1130,108 @@ private struct KeyMappingView: View {
         guard button.remappable else { return false }
         if button.voiceControlled { return true }
         return mappings.target(for: button, remote: selectedDevice) != .disabled
+    }
+}
+
+/// 图上按键的鼠标跟踪。用一个 AppKit 视图拿真实鼠标坐标，算出「离哪个锚点最近」，
+/// 绕开 SwiftUI 热区重叠抢事件的问题（方向盘五个键只隔 28pt）。
+///
+/// 它只监听鼠标移动：`hitTest` 返回 nil，所以不会挡住底下任何点击。
+private struct AnchorHoverTracker: NSViewRepresentable {
+    let lines: [RemoteMappingLayout.Line]
+    /// 跟踪器只盖中间那一栏，换算回排版坐标要加回这个偏移。
+    let offsetX: CGFloat
+    let maxDistance: CGFloat
+    let onNearest: (String?) -> Void
+
+    func makeNSView(context: Context) -> TrackerView {
+        let view = TrackerView()
+        view.apply(lines: lines, offsetX: offsetX, maxDistance: maxDistance, onNearest: onNearest)
+        return view
+    }
+
+    func updateNSView(_ view: TrackerView, context: Context) {
+        view.apply(lines: lines, offsetX: offsetX, maxDistance: maxDistance, onNearest: onNearest)
+    }
+
+    final class TrackerView: NSView {
+        private var lines: [RemoteMappingLayout.Line] = []
+        private var offsetX: CGFloat = 0
+        private var maxDistance: CGFloat = 44
+        private var onNearest: ((String?) -> Void)?
+        private var lastReported: String?
+
+        /// 和 SwiftUI 一样用左上原点，省得每次换算 y。
+        override var isFlipped: Bool { true }
+
+        /// 绝不参与命中测试：鼠标事件靠跟踪区拿，点击照旧穿过去。
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        func apply(
+            lines: [RemoteMappingLayout.Line],
+            offsetX: CGFloat,
+            maxDistance: CGFloat,
+            onNearest: ((String?) -> Void)?
+        ) {
+            self.lines = lines
+            self.offsetX = offsetX
+            self.maxDistance = maxDistance
+            self.onNearest = onNearest
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // 跟踪区里的 .mouseMoved 要窗口愿意派发移动事件才收得到。
+            window?.acceptsMouseMovedEvents = true
+        }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            for area in trackingAreas {
+                removeTrackingArea(area)
+            }
+            addTrackingArea(NSTrackingArea(
+                rect: .zero,
+                options: [
+                    .mouseMoved,
+                    .mouseEnteredAndExited,
+                    .activeInKeyWindow,
+                    .inVisibleRect
+                ],
+                owner: self,
+                userInfo: nil
+            ))
+        }
+
+        override func mouseMoved(with event: NSEvent) {
+            report(event)
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            report(event)
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            report(resolved: nil)
+        }
+
+        private func report(_ event: NSEvent) {
+            let local = convert(event.locationInWindow, from: nil)
+            let resolved = RemoteMappingLayout.nearestButtonID(
+                to: CGPoint(x: local.x + offsetX, y: local.y),
+                lines: lines,
+                maxDistance: maxDistance
+            )
+            report(resolved: resolved)
+        }
+
+        /// 只在「判定结果变了」时上报：鼠标每挪一像素都回调没有意义，
+        /// 也会让上层状态无谓地抖。
+        private func report(resolved: String?) {
+            guard resolved != lastReported else { return }
+            lastReported = resolved
+            onNearest?(resolved)
+        }
     }
 }
 
