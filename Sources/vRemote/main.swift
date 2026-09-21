@@ -695,6 +695,19 @@ if CommandLine.arguments.contains("--mapping-layout-dump") {
 #endif
 
 let app = NSApplication.shared
+
+#if DEBUG
+// 界面自查：渲染成 PNG 后直接退出。必须放在 AppController 之前——
+// 那之后会起状态栏、BLE、HID，快照不需要这些。
+// 顶层代码不是 MainActor，而视图模型是，所以投递到主 actor 上执行。
+if UISnapshot.isRequested {
+    Task { @MainActor in
+        exit(UISnapshot.runIfRequested() ?? EXIT_FAILURE)
+    }
+    app.run()
+}
+#endif
+
 let delegate = AppController()
 app.delegate = delegate
 

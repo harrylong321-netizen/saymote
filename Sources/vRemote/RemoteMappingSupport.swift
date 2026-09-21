@@ -488,8 +488,12 @@ enum RemoteAnchors {
 /// 用一个爬山搜索（单步 → 卡住时试两步）在「交叉数、溢出、两栏不均衡、
 /// 连线总长」上取最优解，结果按型号缓存（锚点是静态的，只算一次）。
 enum RemoteMappingLayout {
-    static let rowHeight: CGFloat = 30
-    static let rowGap: CGFloat = 5
+    /// 行高 34、行间距 0：行之间改用 0.5pt 分隔线区分，不再是「一行一个灰块」，
+    /// 所以不需要间距。一栏最多 10 行 → 340pt，仍在这一栏 341pt 的高度预算内。
+    /// 两个值一起决定连线的起点 y（`place()` 里的 centerY），视图必须按同样的
+    /// 公式摆行，否则连线会跟行错位。
+    static let rowHeight: CGFloat = 34
+    static let rowGap: CGFloat = 0
     static let topInset: CGFloat = 2
     static let maxRowsPerColumn = 10
     static let centerColumnWidth: CGFloat = 144
@@ -530,12 +534,16 @@ enum RemoteMappingLayout {
 
     private struct Metrics: Comparable {
         let crossings: Int
+        /// 行在自己那栏、按键却长在机身的另一半——焦点连线会横穿遥控器。
+        /// 排在「交叉数」之后当次要目标：不能为了它牺牲「连线不相交」这条硬要求。
+        let crossOver: Int
         let overflow: Int
         let imbalance: Int
         let length: Int
 
         static func < (lhs: Metrics, rhs: Metrics) -> Bool {
             if lhs.crossings != rhs.crossings { return lhs.crossings < rhs.crossings }
+            if lhs.crossOver != rhs.crossOver { return lhs.crossOver < rhs.crossOver }
             if lhs.overflow != rhs.overflow { return lhs.overflow < rhs.overflow }
             if lhs.imbalance != rhs.imbalance { return lhs.imbalance < rhs.imbalance }
             return lhs.length < rhs.length
@@ -817,11 +825,31 @@ enum RemoteMappingLayout {
         }
         return Metrics(
             crossings: crossings,
+            crossOver: crossOverCount(assignment: assignment, anchored: anchored),
             overflow: max(0, leftCount - maxRowsPerColumn)
                 + max(0, rightCount - maxRowsPerColumn),
             imbalance: abs(leftCount - rightCount),
             length: Int(totalLength.rounded())
         )
+    }
+
+    /// 中线上（方向盘那一列）的按键放哪边都不算横穿，所以要留容差。
+    /// 自测要用同一个阈值判断，所以不设 private。
+    static let midlineTolerance: CGFloat = 0.08
+
+    private static func crossOverCount(
+        assignment: [String: Bool],
+        anchored: [(RemoteButtonDefinition, CGPoint)]
+    ) -> Int {
+        var count = 0
+        for (button, anchor) in anchored {
+            guard abs(anchor.x - 0.5) > midlineTolerance else { continue }
+            let belongsLeft = anchor.x < 0.5
+            if (assignment[button.id] ?? false) != belongsLeft {
+                count += 1
+            }
+        }
+        return count
     }
 
     private static func segmentsCross(

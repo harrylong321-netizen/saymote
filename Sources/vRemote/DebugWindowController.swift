@@ -137,6 +137,17 @@ private enum ConsoleTheme {
     static let redDeep = Color(red: 0.996, green: 0.918, blue: 0.914)
     static let goodDeep = Color(red: 0.898, green: 0.961, blue: 0.914)
     static let black = Color(red: 0.925, green: 0.937, blue: 0.953)
+    /// 压在浅绿底（`goodDeep`）上的绿：白底用 `green`，浅绿底要用这个才够 4.5:1。
+    static let greenDeep = Color(red: 0.055, green: 0.400, blue: 0.208)
+    /// 行分隔线比 `lineSoft` 更轻——密集列表里分隔线不该抢视线。
+    static let divider = Color(red: 0.933, green: 0.945, blue: 0.957)
+    /// 常态锚点小点：中性灰。绿色只留给「焦点连线」，否则一页十几个绿点又回到噪音。
+    static let anchorDot = Color(red: 0.765, green: 0.792, blue: 0.827)
+}
+
+/// 「减少动态效果」是系统级无障碍开关，悬停反馈要跟着它走。
+private var reduceMotionEnabled: Bool {
+    NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
 }
 
 enum LogoAsset {
@@ -725,13 +736,33 @@ private struct KeyMappingView: View {
     @ObservedObject var model: ConsoleViewModel
     @ObservedObject private var mappings = RemoteMappingStore.shared
     @State private var selectedDevice: SupportedRemoteID = .chromecast
+    /// 当前被悬停的行（或图上被悬停的锚点）。只为这一条画连线——
+    /// 15 条线常驻是这一页显乱的根源，而「查某个键对应哪行」本来就是逐个看的动作。
+    @State private var hoveredButtonID: String?
+
+    /// `previewHoverButtonID` 只服务 `--ui-snapshot`：把悬停态也渲染进静态图。
+    /// 运行时是 nil，悬停一律由 `.onHover` 驱动。
+    init(model: ConsoleViewModel, previewHoverButtonID: String? = nil) {
+        self.model = model
+        _hoveredButtonID = State(initialValue: previewHoverButtonID)
+    }
 
     var body: some View {
         VStack(spacing: 12) {
             triggerPanel
-                .frame(height: 116)
-            deviceBar
-                .frame(height: 36)
+                .frame(height: 100)
+            mappingCard
+        }
+    }
+
+    // MARK: - 映射卡：设备头部 + 三栏 + 脚注
+
+    private var mappingCard: some View {
+        VStack(spacing: 0) {
+            cardHeader
+            Rectangle()
+                .fill(ConsoleTheme.divider)
+                .frame(height: 0.5)
             GeometryReader { proxy in
                 let layout = RemoteMappingLayout.layout(
                     remote: selectedDevice,
@@ -743,49 +774,26 @@ private struct KeyMappingView: View {
                     HStack(alignment: .top, spacing: RemoteMappingLayout.columnGap) {
                         mappingColumn(layout.left)
                         centerColumn(width: layout.imageWidth)
-                            .frame(width: RemoteMappingLayout.centerColumnWidth)
                         mappingColumn(layout.right)
                     }
-                    // 连线画在最上层：起点正好在行卡片的内侧边缘，所以不会盖住行；
-                    // 终点落在遥控器图上，看得见指到了哪个键。
+                    // 连线在最上层。常态只剩锚点小点，悬停某行才画出那一条曲线；
+                    // 起终点直接取排版算好的折线首尾，几何仍由 RemoteMappingLayout
+                    // 决定，所以零相交自测照常有效。
                     Canvas { context, _ in
-                        for line in layout.lines {
-                            let color = line.active
-                                ? ConsoleTheme.green.opacity(0.75)
-                                : ConsoleTheme.tertiary.opacity(0.7)
-                            var path = Path()
-                            guard let first = line.points.first else { continue }
-                            path.move(to: first)
-                            for point in line.points.dropFirst() {
-                                path.addLine(to: point)
-                            }
-                            context.stroke(
-                                path,
-                                with: .color(color),
-                                style: StrokeStyle(lineWidth: 1, lineCap: .round)
-                            )
-                            guard let end = line.points.last else { continue }
-                            let dot = Path(
-                                ellipseIn: CGRect(
-                                    x: end.x - 3.5,
-                                    y: end.y - 3.5,
-                                    width: 7,
-                                    height: 7
-                                )
-                            )
-                            context.fill(dot, with: .color(color))
-                            context.stroke(
-                                dot,
-                                with: .color(ConsoleTheme.panel.opacity(0.9)),
-                                lineWidth: 1
-                            )
-                        }
+                        drawMappingLines(context: context, layout: layout)
                     }
                     .allowsHitTesting(false)
+                    anchorHitZones(layout)
                 }
             }
-            .frame(maxHeight: .infinity)
+            // 内边距必须加在 GeometryReader **外面**：这样里面拿到的才是收窄后
+            // 的宽度，Canvas 的坐标才和三栏实际摆放的位置对齐。之前加在里面的
+            // ZStack 上，Canvas 按未收窄的宽度算锚点，落点整体偏了 16pt。
+            .padding(.top, 6)
+            .padding(.horizontal, 16)
+            cardFootnote
         }
+        .background(panelBackground(ConsoleTheme.surface, radius: 17))
     }
 
     private var imageAspect: CGFloat {
@@ -795,39 +803,125 @@ private struct KeyMappingView: View {
         return image.size.width / image.size.height
     }
 
+    // MARK: - 连线
+
+    private func drawMappingLines(
+        context: GraphicsContext,
+        layout: RemoteMappingLayout.Layout
+    ) {
+        for line in layout.lines {
+            guard let start = line.points.first,
+                  let end = line.points.last
+            else { continue }
+
+            guard line.buttonID == hoveredButtonID else {
+                // 静默态：只留一个中性小点，标记「这个键有锚点」。
+                let radius: CGFloat = 2.75
+                let dot = Path(ellipseIn: CGRect(
+                    x: end.x - radius,
+                    y: end.y - radius,
+                    width: radius * 2,
+                    height: radius * 2
+                ))
+                let color = line.active
+                    ? ConsoleTheme.anchorDot
+                    : ConsoleTheme.anchorDot.opacity(0.45)
+                context.fill(dot, with: .color(color))
+                context.stroke(dot, with: .color(ConsoleTheme.surface), lineWidth: 1)
+                continue
+            }
+
+            // 焦点态：光晕 + 圆角曲线 + 白心绿环落点。
+            let halo = Path(ellipseIn: CGRect(
+                x: end.x - 11, y: end.y - 11, width: 22, height: 22
+            ))
+            context.fill(halo, with: .color(ConsoleTheme.green.opacity(0.13)))
+
+            let direction: CGFloat = end.x >= start.x ? 1 : -1
+            let bend = max(24, abs(end.x - start.x) * 0.45)
+            // 线停在光晕边缘：环形落点要完整盖住按键，不要扎进按键图形里。
+            let stop = abs(end.x - start.x) > 24
+                ? CGPoint(x: end.x - direction * 12, y: end.y)
+                : end
+            var curve = Path()
+            curve.move(to: start)
+            curve.addCurve(
+                to: stop,
+                control1: CGPoint(x: start.x + direction * bend, y: start.y),
+                control2: CGPoint(x: stop.x - direction * bend, y: stop.y)
+            )
+            context.stroke(
+                curve,
+                with: .color(ConsoleTheme.green),
+                style: StrokeStyle(lineWidth: 2, lineCap: .round)
+            )
+
+            let ring = Path(ellipseIn: CGRect(
+                x: end.x - 6, y: end.y - 6, width: 12, height: 12
+            ))
+            context.fill(ring, with: .color(ConsoleTheme.surface))
+            context.stroke(ring, with: .color(ConsoleTheme.green), lineWidth: 2)
+        }
+    }
+
+    /// 图上的锚点热区：悬停圆点反向高亮所在行。
+    /// 必须撑满整块区域，否则超出自身 frame 的热区收不到鼠标事件。
+    private func anchorHitZones(_ layout: RemoteMappingLayout.Layout) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(layout.lines, id: \.buttonID) { line in
+                if let end = line.points.last {
+                    Color.clear
+                        .frame(width: 24, height: 24)
+                        .contentShape(Circle())
+                        .offset(x: end.x - 12, y: end.y - 12)
+                        .onHover { hovering in
+                            setHover(hovering ? line.buttonID : nil)
+                        }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// 悬停是瞬时反馈：120ms 淡入足够，但「减少动态效果」打开时直接切换。
+    private func setHover(_ id: String?) {
+        guard hoveredButtonID != id else { return }
+        if reduceMotionEnabled {
+            hoveredButtonID = id
+        } else {
+            withAnimation(.easeOut(duration: 0.12)) {
+                hoveredButtonID = id
+            }
+        }
+    }
+
     private var triggerPanel: some View {
-        HStack(spacing: 18) {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 7) {
+        HStack(alignment: .center, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label {
+                    Text(L10n.text("豆包语音触发键", "Doubao voice trigger"))
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(ConsoleTheme.text)
+                } icon: {
                     Image(systemName: "waveform.badge.mic")
                         .foregroundStyle(ConsoleTheme.green)
-                    Text(L10n.text("豆包语音触发键", "Doubao voice trigger"))
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(ConsoleTheme.text)
                 }
                 Text(L10n.text(
                     "遥控器语音键与电脑键盘都使用这个按键控制豆包。这里必须与豆包输入法中的语音快捷键保持一致。",
                     "The remote voice key and Mac keyboard both use this trigger. It must match Doubao Input Method's voice shortcut."
                 ))
-                    .font(.system(size: 12.5))
+                    .font(.system(size: 12))
                     .foregroundStyle(ConsoleTheme.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 430, alignment: .leading)
             }
-            Spacer(minLength: 10)
-            VStack(alignment: .trailing, spacing: 7) {
-                Picker(
-                    L10n.text("触发键", "Trigger"),
-                    selection: Binding(
-                        get: { model.inputTriggerKey },
-                        set: model.setInputTrigger
-                    )
-                ) {
+            Spacer(minLength: 12)
+            VStack(alignment: .trailing, spacing: 6) {
+                pillMenu(text: model.inputTriggerKey.title, width: 150) {
                     ForEach(InputTriggerKey.allCases) { trigger in
-                        Text(trigger.title).tag(trigger)
+                        Button(trigger.title) { model.setInputTrigger(trigger) }
                     }
                 }
-                .labelsHidden()
-                .frame(width: 158)
                 .disabled(model.remoteStreaming)
                 if model.inputTriggerKey == .function {
                     Label(
@@ -847,24 +941,66 @@ private struct KeyMappingView: View {
         .background(panelBackground(ConsoleTheme.surface, radius: 17))
     }
 
-    // MARK: - 设备条
+    /// 「值 + chevron」的小胶囊。用来替掉系统下拉框——原生蓝底蓝箭头在这页会跟
+    /// 语义绿打架，而这一页有十几个下拉，蓝色一多就没有强调色可言了。
+    ///
+    /// 外观必须画在 `Menu` **外面**：`Menu` 的 label 里只要出现 `Image`，SwiftUI
+    /// 就按 LabelStyle 把它当图标挪到文字前面；label 自带的背景/描边也会被丢掉
+    /// （实测，见 `--ui-controls-trial`）。所以这里的约定是「Menu 只管弹菜单，
+    /// 胶囊和箭头都由外面画」。
+    /// `width` 给了就把箭头推到最右，没给就紧贴文字（设备名长度不定）。
+    private func pillMenu<Content: View>(
+        text: String,
+        width: CGFloat? = nil,
+        @ViewBuilder menu: () -> Content
+    ) -> some View {
+        HStack(spacing: 6) {
+            Menu(content: menu) {
+                Text(text)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(ConsoleTheme.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            if width != nil {
+                Spacer(minLength: 0)
+            }
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(ConsoleTheme.tertiary)
+        }
+        .padding(.horizontal, 9)
+        .frame(width: width, height: 24, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 7).fill(ConsoleTheme.surface))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7).stroke(ConsoleTheme.line, lineWidth: 0.5)
+        )
+    }
 
-    private var deviceBar: some View {
-        HStack(spacing: 10) {
-            Picker("", selection: $selectedDevice) {
+    // MARK: - 卡片头部（原设备条并进来）
+
+    private var cardHeader: some View {
+        HStack(spacing: 8) {
+            pillMenu(text: selectedDevice.title) {
                 ForEach(SupportedRemoteID.allCases) { remote in
-                    Text(remote.title).tag(remote)
+                    Button(remote.title) { selectedDevice = remote }
                 }
             }
-            .labelsHidden()
-            .frame(width: 232)
+
             Circle()
                 .fill(deviceConnected ? ConsoleTheme.green : ConsoleTheme.tertiary)
-                .frame(width: 8, height: 8)
-                .help(deviceConnected
-                    ? L10n.text("已连接", "Connected")
-                    : L10n.text("未连接", "Offline"))
-            Spacer(minLength: 8)
+                .frame(width: 6, height: 6)
+            Text(deviceConnected
+                ? L10n.text("已连接", "Connected")
+                : L10n.text("未连接", "Offline"))
+                .font(.system(size: 11))
+                .foregroundStyle(ConsoleTheme.secondary)
+
+            Spacer(minLength: 10)
+
             if !mappings.isEnabled(selectedDevice) {
                 Label(
                     L10n.text("未启用时保持系统原行为", "System behavior is unchanged"),
@@ -882,15 +1018,30 @@ private struct KeyMappingView: View {
             )
             .toggleStyle(.switch)
             .controlSize(.small)
+            Rectangle()
+                .fill(ConsoleTheme.divider)
+                .frame(width: 0.5, height: 14)
             Button(L10n.text("恢复默认", "Reset")) {
                 mappings.reset(selectedDevice)
             }
             .buttonStyle(.plain)
-            .font(.system(size: 11.5, weight: .semibold))
-            .foregroundStyle(ConsoleTheme.green)
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(ConsoleTheme.secondary)
         }
-        .padding(.horizontal, 14)
-        .background(panelBackground(ConsoleTheme.surface, radius: 15))
+        .padding(.horizontal, 16)
+        .frame(height: 40)
+    }
+
+    private var cardFootnote: some View {
+        Text(L10n.text(
+            "悬停任意一行，在遥控器图上高亮对应按键",
+            "Hover a row to highlight its button on the remote"
+        ))
+            .font(.system(size: 11))
+            .foregroundStyle(ConsoleTheme.tertiary)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, 2)
+            .padding(.bottom, 10)
     }
 
     private var deviceConnected: Bool {
@@ -901,13 +1052,25 @@ private struct KeyMappingView: View {
 
     private func mappingColumn(_ rows: [RemoteMappingLayout.Row]) -> some View {
         VStack(spacing: RemoteMappingLayout.rowGap) {
-            ForEach(rows, id: \.button.id) { row in
+            ForEach(Array(rows.enumerated()), id: \.element.button.id) { index, row in
                 MappingRow(
                     remote: selectedDevice,
                     button: row.button,
-                    enabled: mappings.isEnabled(selectedDevice)
+                    enabled: mappings.isEnabled(selectedDevice),
+                    isHighlighted: hoveredButtonID == row.button.id,
+                    onHover: { hovering in
+                        setHover(hovering ? row.button.id : nil)
+                    }
                 )
                 .frame(height: RemoteMappingLayout.rowHeight)
+                // 分隔线落在行顶部那 2pt 留白里，悬停胶囊不会把它盖掉。
+                .overlay(alignment: .top) {
+                    if index > 0 {
+                        Rectangle()
+                            .fill(ConsoleTheme.divider)
+                            .frame(height: 0.5)
+                    }
+                }
             }
         }
         .padding(.top, RemoteMappingLayout.topInset)
@@ -915,39 +1078,35 @@ private struct KeyMappingView: View {
     }
 
     private func centerColumn(width: CGFloat) -> some View {
-        VStack(spacing: 6) {
-            Group {
-                if let image = RemoteImageAsset.image(for: selectedDevice) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: width, height: RemoteMappingLayout.imageHeight)
-                } else {
-                    Label(
-                        L10n.text("遥控器图片缺失", "Remote image unavailable"),
-                        systemImage: "photo.badge.exclamationmark"
-                    )
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(ConsoleTheme.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(
-                        width: RemoteMappingLayout.centerColumnWidth,
-                        height: RemoteMappingLayout.imageHeight
-                    )
-                }
-            }
-            Text(L10n.text("连线指向遥控器上对应的按键", "Each line points at its button"))
-                .font(.system(size: 10))
-                .foregroundStyle(ConsoleTheme.tertiary)
+        Group {
+            if let image = RemoteImageAsset.image(for: selectedDevice) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: width, height: RemoteMappingLayout.imageHeight)
+            } else {
+                Label(
+                    L10n.text("遥控器图片缺失", "Remote image unavailable"),
+                    systemImage: "photo.badge.exclamationmark"
+                )
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(ConsoleTheme.secondary)
                 .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+                .frame(
+                    width: RemoteMappingLayout.centerColumnWidth,
+                    height: RemoteMappingLayout.imageHeight
+                )
+            }
         }
-        .frame(height: RemoteMappingLayout.imageHeight + 30, alignment: .top)
+        .frame(
+            width: RemoteMappingLayout.centerColumnWidth,
+            height: RemoteMappingLayout.imageHeight,
+            alignment: .top
+        )
     }
 
-    /// 图上的点跟着映射状态走：这个键没被「禁用」就是绿的。
+    /// 图上的点跟着映射状态走：这个键没被「禁用」就是实心，禁用/内部功能更淡。
     private func markerActive(_ button: RemoteButtonDefinition) -> Bool {
         guard button.remappable else { return false }
         if button.voiceControlled { return true }
@@ -961,78 +1120,39 @@ private struct MappingRow: View {
     let remote: SupportedRemoteID
     let button: RemoteButtonDefinition
     let enabled: Bool
+    let isHighlighted: Bool
+    let onHover: (Bool) -> Void
+
+    /// 上下各留 2pt：悬停胶囊不贴到行分隔线上。
+    private let verticalInset: CGFloat = 2
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 8) {
             Image(systemName: button.symbol)
+                .font(.system(size: 11))
                 .frame(width: 15)
-                .foregroundStyle(button.voiceControlled ? ConsoleTheme.green : ConsoleTheme.secondary)
+                .foregroundStyle(iconColor)
+                .accessibilityHidden(true)
             Text(button.title)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(ConsoleTheme.text)
                 .lineLimit(1)
-                .minimumScaleFactor(0.85)
+                .minimumScaleFactor(0.9)
                 .frame(width: 76, alignment: .leading)
-            Spacer(minLength: 4)
-            if !button.remappable {
-                Text(L10n.text("设备内部功能", "Device-only function"))
-                    .font(.system(size: 11))
-                    .foregroundStyle(ConsoleTheme.tertiary)
-            } else if button.voiceControlled {
-                Text(RemoteMappingTarget.doubaoVoice.title)
-                    .font(.system(size: 11))
-                    .foregroundStyle(ConsoleTheme.green)
-            } else {
-                HStack(spacing: 4) {
-                    Picker(
-                        button.title,
-                        selection: Binding(
-                            get: { mappings.target(for: button, remote: remote) },
-                            set: { target in
-                                if target == .custom {
-                                    showRecorder = true
-                                } else if target == .openApp {
-                                    mappings.setTarget(target, for: button, remote: remote)
-                                    chooseApp()
-                                } else {
-                                    mappings.setTarget(target, for: button, remote: remote)
-                                }
-                            }
-                        )
-                    ) {
-                        ForEach(RemoteMappingTarget.allCases.filter { $0 != .doubaoVoice }) { target in
-                            // 只有「当前选中的那一项」显示动态名字（自定义按键的
-                            // 组合、所选 App 的名字）。其它项一律显示目标本身的名字，
-                            // 否则每一项都会显示成当前目标的标题（曾导致列表里出现
-                            // 两个「禁用」、两个「系统音量＋」）。
-                            Text(targetLabel(for: target)).tag(target)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 116)
-                    if mappings.target(for: button, remote: remote) == .custom {
-                        Button { showRecorder = true } label: {
-                            Image(systemName: "record.circle")
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(ConsoleTheme.green)
-                        .help(L10n.text("重新录制按键", "Record again"))
-                    } else if mappings.target(for: button, remote: remote) == .openApp {
-                        Button { chooseApp() } label: {
-                            Image(systemName: "app.badge")
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(ConsoleTheme.green)
-                        .help(L10n.text("重新选择应用", "Choose another app"))
-                    }
-                }
-            }
+            Spacer(minLength: 8)
+            valueArea
         }
-        .frame(height: 32)
-        .padding(.horizontal, 9)
-        .background(ConsoleTheme.surface2)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .accessibilityElement(children: .combine)
+        .padding(.horizontal, 10)
+        .frame(height: RemoteMappingLayout.rowHeight - verticalInset * 2)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(isHighlighted ? ConsoleTheme.goodDeep : Color.clear)
+        )
+        .padding(.vertical, verticalInset)
+        .contentShape(Rectangle())
+        .onHover(perform: onHover)
+        // 映射没启用时整行压暗：一眼看出「这些设置当前不生效」。
+        .opacity(enabled ? 1 : 0.55)
         .sheet(isPresented: $showRecorder) {
             KeyboardShortcutCaptureView(
                 buttonTitle: button.title,
@@ -1047,6 +1167,102 @@ private struct MappingRow: View {
                 }
             )
         }
+    }
+
+    @ViewBuilder
+    private var valueArea: some View {
+        if !button.remappable {
+            Text(L10n.text("设备内部功能", "Device-only function"))
+                .font(.system(size: 11.5))
+                .foregroundStyle(ConsoleTheme.tertiary)
+        } else if button.voiceControlled {
+            Text(RemoteMappingTarget.doubaoVoice.title)
+                .font(.system(size: 11.5, weight: isHighlighted ? .medium : .regular))
+                .foregroundStyle(isHighlighted ? ConsoleTheme.greenDeep : ConsoleTheme.green)
+        } else {
+            HStack(spacing: 4) {
+                targetMenu
+                if currentTarget == .custom {
+                    secondaryActionButton(
+                        symbol: "record.circle",
+                        help: L10n.text("重新录制按键", "Record again")
+                    ) { showRecorder = true }
+                } else if currentTarget == .openApp {
+                    secondaryActionButton(
+                        symbol: "app.badge",
+                        help: L10n.text("重新选择应用", "Choose another app"),
+                        action: chooseApp
+                    )
+                }
+            }
+        }
+    }
+
+    /// 「当前值 + chevron」的文字菜单：替掉系统下拉框，去掉那一片蓝色。
+    /// 箭头同样画在 `Menu` 外面，理由见 `pillMenu`。
+    private var targetMenu: some View {
+        HStack(spacing: 4) {
+            Menu {
+                ForEach(RemoteMappingTarget.allCases.filter { $0 != .doubaoVoice }) { target in
+                    // 只有「当前选中的那一项」显示动态名字（自定义按键的组合、所选 App
+                    // 的名字）。其它项一律显示目标本身的名字，否则每一项都会显示成当前
+                    // 目标的标题（曾导致列表里出现两个「禁用」、两个「系统音量＋」）。
+                    Button(targetLabel(for: target)) { select(target) }
+                }
+            } label: {
+                Text(mappings.targetTitle(for: button, remote: remote))
+                    .font(.system(size: 11.5, weight: isHighlighted ? .medium : .regular))
+                    .foregroundStyle(valueColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(isHighlighted ? ConsoleTheme.greenDeep : ConsoleTheme.tertiary)
+        }
+        .accessibilityLabel(L10n.text("\(button.title) 的动作", "\(button.title) action"))
+    }
+
+    private func secondaryActionButton(
+        symbol: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11))
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isHighlighted ? ConsoleTheme.greenDeep : ConsoleTheme.green)
+        .help(help)
+    }
+
+    private func select(_ target: RemoteMappingTarget) {
+        switch target {
+        case .custom:
+            showRecorder = true
+        case .openApp:
+            mappings.setTarget(target, for: button, remote: remote)
+            chooseApp()
+        default:
+            mappings.setTarget(target, for: button, remote: remote)
+        }
+    }
+
+    private var iconColor: Color {
+        if isHighlighted { return ConsoleTheme.greenDeep }
+        return button.voiceControlled ? ConsoleTheme.green : ConsoleTheme.secondary
+    }
+
+    /// 高亮行落在浅绿底上，绿色要换深一档才够 4.5:1（见 `greenDeep`）。
+    private var valueColor: Color {
+        if isHighlighted { return ConsoleTheme.greenDeep }
+        return currentTarget == .disabled ? ConsoleTheme.tertiary : ConsoleTheme.secondary
     }
 
     private var currentTarget: RemoteMappingTarget {
@@ -1711,3 +1927,100 @@ private func panelBackground(_ color: Color, radius: CGFloat) -> some View {
         .fill(color)
         .overlay(RoundedRectangle(cornerRadius: radius).stroke(ConsoleTheme.line, lineWidth: 1))
 }
+
+#if DEBUG
+/// 把控制台界面离线渲染成 PNG，用来在改完界面后自查外观。
+///
+/// 为什么不用 `screencapture`：那需要「屏幕录制」权限，而 App 渲染自己的视图
+/// 不需要——也不会把窗口弹到别人屏幕上。
+///
+/// 用法：`.build/debug/vRemote --ui-snapshot <输出目录>`
+@MainActor
+enum UISnapshot {
+    private static let pageSize = CGSize(width: 775, height: 658)
+
+    /// `main.swift` 的顶层代码不是 MainActor，所以这个判断要 nonisolated。
+    nonisolated static var isRequested: Bool {
+        CommandLine.arguments.contains("--ui-snapshot")
+    }
+
+    static func runIfRequested() -> Int32? {
+        let arguments = CommandLine.arguments
+        guard let flag = arguments.firstIndex(of: "--ui-snapshot") else { return nil }
+        guard flag + 1 < arguments.count else {
+            FileHandle.standardError.write(
+                Data("用法：--ui-snapshot <输出目录>\n".utf8)
+            )
+            return EXIT_FAILURE
+        }
+        let directory = arguments[flag + 1]
+
+        func makeModel() -> ConsoleViewModel {
+            let model = ConsoleViewModel()
+            model.selectedPage = .mapping
+            // 快照里让设备显示「已连接」，否则状态点和文案是离线态，看不出真实样子。
+            model.chromecastConnected = true
+            model.hidConnected = true
+            model.bleConnected = true
+            return model
+        }
+
+        capture(
+            StudioMixerView(model: makeModel()),
+            named: "映射页-默认态.png",
+            to: directory
+        )
+        // 悬停态单独出一张：焦点连线只有 hover 时才画，静态默认态看不到。
+        capture(
+            KeyMappingView(model: makeModel(), previewHoverButtonID: "07")
+                .frame(width: pageSize.width - 40, height: pageSize.height - 40)
+                .padding(20)
+                .background(ConsoleTheme.panel),
+            named: "映射页-悬停确认键.png",
+            to: directory
+        )
+        return EXIT_SUCCESS
+    }
+
+    private static func capture<V: View>(_ view: V, named name: String, to directory: String) {
+        let host = NSHostingView(rootView: view)
+        host.appearance = NSAppearance(named: .aqua)
+        host.frame = NSRect(origin: .zero, size: pageSize)
+        host.layoutSubtreeIfNeeded()
+        host.displayIfNeeded()
+
+        let scale: CGFloat = 2
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(pageSize.width * scale),
+            pixelsHigh: Int(pageSize.height * scale),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            FileHandle.standardError.write(Data("快照失败：无法创建位图\n".utf8))
+            return
+        }
+        rep.size = pageSize
+        host.cacheDisplay(in: host.bounds, to: rep)
+
+        guard let data = rep.representation(using: .png, properties: [:]) else {
+            FileHandle.standardError.write(Data("快照失败：PNG 编码失败\n".utf8))
+            return
+        }
+        let url = URL(fileURLWithPath: directory).appendingPathComponent(name)
+        do {
+            try data.write(to: url)
+            FileHandle.standardOutput.write(Data("快照：\(url.path)\n".utf8))
+        } catch {
+            FileHandle.standardError.write(
+                Data("快照失败：\(error.localizedDescription)\n".utf8)
+            )
+        }
+    }
+}
+#endif

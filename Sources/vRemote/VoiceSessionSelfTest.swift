@@ -448,6 +448,26 @@ enum MappingLayoutSelfTest {
                 failures += 1
                 emit("[MAPPING-TEST] FAIL \(name)：一栏 \(maxRows) 行，超过 \(RemoteMappingLayout.maxRowsPerColumn) 行")
             }
+            // 行和它对应的按键必须在机身同一侧，否则悬停时那条焦点连线会横穿
+            // 整个遥控器。中线上（方向盘那一列）的按键放哪边都算合理。
+            var strays: [String] = []
+            for (side, sideRows) in [("左", layout.left), ("右", layout.right)] {
+                for row in sideRows {
+                    guard let anchor = row.anchor else { continue }
+                    guard abs(anchor.x - 0.5) > RemoteMappingLayout.midlineTolerance
+                    else { continue }
+                    let belongsLeft = anchor.x < 0.5
+                    if belongsLeft != (side == "左") {
+                        strays.append("\(row.button.id)@\(side)栏")
+                    }
+                }
+            }
+            if strays.isEmpty {
+                emit("[MAPPING-TEST] PASS \(name)：没有横穿机身的连线")
+            } else {
+                failures += 1
+                emit("[MAPPING-TEST] FAIL \(name)：横穿机身 \(strays.joined(separator: "、"))")
+            }
         }
         emit("[MAPPING-TEST] completed failures=\(failures)")
         return failures == 0
