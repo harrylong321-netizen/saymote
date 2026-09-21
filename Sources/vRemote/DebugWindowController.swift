@@ -172,17 +172,17 @@ enum LogoAsset {
 /// 有没有拷到资源目录（这个项目已经被打包漏文件坑过一次）。
 enum StatusIconAsset {
     static let image: NSImage = {
-        let image = NSImage(size: NSSize(width: 18, height: 18))
-        for (base64, points) in [
-            (template1x, NSSize(width: 16, height: 16)),
-            (template2x, NSSize(width: 32, height: 32))
-        ] {
+        // 逻辑尺寸统一给 16pt：16px 那张是 1x、32px 那张是 2x（NSImage 按
+        // 「像素宽 ÷ 逻辑宽」推断倍率）。之前把 32px 那张的逻辑尺寸也设成 32pt，
+        // 倍率会被当成 1，Retina 下就会取错图。
+        let image = NSImage(size: NSSize(width: 16, height: 16))
+        for base64 in [template1x, template2x] {
             guard let data = Data(
                 base64Encoded: base64,
                 options: .ignoreUnknownCharacters
             ), let rep = NSBitmapImageRep(data: data)
             else { continue }
-            rep.size = points
+            rep.size = NSSize(width: 16, height: 16)
             image.addRepresentation(rep)
         }
         image.isTemplate = true
