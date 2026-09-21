@@ -463,6 +463,23 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.chromecastHID.setRemappingEnabled(enabled)
             }
         }
+        // 「系统设置」模块里的两项：都复用菜单栏那套逻辑，保证两边行为一致。
+        debugWindow.onLanguageChanged = { [weak self] language in
+            self?.setLanguageAndRestart(language)
+        }
+        debugWindow.onLaunchAtLoginChanged = { [weak self] enabled in
+            guard let self else { return }
+            do {
+                try LaunchAtLogin.setEnabled(enabled)
+            } catch {
+                self.headerLabel.title = L10n.text(
+                    "状态 · 登录启动设置失败",
+                    "Status · Launch-at-login failed"
+                )
+            }
+            // 让菜单里的勾选跟上；写失败时控制台那边的定时刷新会把开关拨回来。
+            self.refreshMenuState()
+        }
     }
 
     /// 状态栏图标：左键单击 → 直接打开控制台；右键单击（触控板双指点按，

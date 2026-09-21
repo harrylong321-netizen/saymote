@@ -457,20 +457,30 @@ enum MappingLayoutSelfTest {
                 failures += 1
                 emit("[MAPPING-TEST] FAIL \(name)：一栏 \(maxRows) 行，超过 \(RemoteMappingLayout.maxRowsPerColumn) 行")
             }
-            // 栏内行序必须是锚点 y 升序——分栏表就是按这个规则写的，
-            // 顺序一乱，用户指定的那张自上而下的表就对不上了。
+            // 栏内行序：指定了行序表就按表校验；否则校验锚点 y 升序
+            // （分栏表就是按 y 序写的，顺序一乱用户指定的那张表就对不上了）。
             var disorder: [String] = []
-            for (side, sideRows) in [("左", layout.left), ("右", layout.right)] {
-                let ys = sideRows.compactMap { $0.anchor?.y }
-                if ys != ys.sorted() {
-                    disorder.append("\(side)栏")
+            if let order = RemoteMappingLayout.userRowOrder[remote] {
+                for (side, sideRows) in [("左", layout.left), ("右", layout.right)] {
+                    let ids = sideRows.map(\.button.id)
+                    let expected = order.filter { ids.contains($0) }
+                    if ids != expected {
+                        disorder.append("\(side)栏(\(ids.joined(separator: ","))≠\(expected.joined(separator: ",")))")
+                    }
+                }
+            } else {
+                for (side, sideRows) in [("左", layout.left), ("右", layout.right)] {
+                    let ys = sideRows.compactMap { $0.anchor?.y }
+                    if ys != ys.sorted() {
+                        disorder.append("\(side)栏")
+                    }
                 }
             }
             if disorder.isEmpty {
-                emit("[MAPPING-TEST] PASS \(name)：栏内行序按锚点 y 升序")
+                emit("[MAPPING-TEST] PASS \(name)：栏内行序符合预期")
             } else {
                 failures += 1
-                emit("[MAPPING-TEST] FAIL \(name)：\(disorder.joined(separator: "、"))行序不是 y 升序")
+                emit("[MAPPING-TEST] FAIL \(name)：行序不符 —— \(disorder.joined(separator: "、"))")
             }
             if let spec = RemoteMappingLayout.userAssignment[remote] {
                 // 用户指定的分栏：断言两栏就是他要的那张表。

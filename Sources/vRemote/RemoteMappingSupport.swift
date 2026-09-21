@@ -565,6 +565,18 @@ enum RemoteMappingLayout {
     /// 「不相交 / 不横穿」这两条几何约束在界面上已经看不见了，所以让位给手感。
     /// 栏内行序仍按锚点 y 自动排（左栏那张表正好就是 y 序）。
     /// 值 `true` = 左栏。没列进来的型号仍走求解器（X6 目前是这种情况）。
+    /// 用户指定的行序（可选）。给了就按这个顺序自上而下排，不再按锚点 y。
+    /// 只影响显示顺序——锚点坐标仍然是「键在图上的实际位置」，两者互不干扰。
+    /// 用一条总表表示：每栏各自按表里的相对顺序排，不在表里的行退回按 y 排。
+    static let userRowOrder: [SupportedRemoteID: [String]] = [
+        .chromecast: [
+            // 右栏（方向盘顺时针 + 音量）：上、左、下、右、确认、音量＋、音量－
+            "03", "05", "04", "06", "07", "0C", "0D",
+            // 左栏：返回、语音、Home、静音、YouTube、Netflix、电源、信源
+            "0B", "voice", "0A", "08", "0E", "0F", "01", "11"
+        ]
+    ]
+
     static let userAssignment: [SupportedRemoteID: [String: Bool]] = [
         .chromecast: [
             // 右栏：方向盘五个键 + 音量加减
@@ -626,7 +638,8 @@ enum RemoteMappingLayout {
             assignment: assignment,
             anchored: anchored,
             unanchored: unanchored,
-            geometry: geometry
+            geometry: geometry,
+            rowOrder: userRowOrder[remote] ?? []
         )
         let leftRows = placement.left.map {
             Row(button: $0.button, anchor: $0.anchor, centerY: $0.centerY)
@@ -664,7 +677,8 @@ enum RemoteMappingLayout {
         assignment: [String: Bool],
         anchored: [(RemoteButtonDefinition, CGPoint)],
         unanchored: [RemoteButtonDefinition],
-        geometry: Geometry
+        geometry: Geometry,
+        rowOrder: [String] = []
     ) -> Placement {
         var columns: [Bool: [(RemoteButtonDefinition, CGPoint?)]] = [true: [], false: []]
         for (button, anchor) in anchored {
@@ -677,10 +691,17 @@ enum RemoteMappingLayout {
         func placed(isLeft: Bool) -> [(button: RemoteButtonDefinition, anchor: CGPoint?, centerY: CGFloat)] {
             (columns[isLeft] ?? [])
                 .sorted { lhs, rhs in
+                    // 指定了行序就按它排（例如用户要的「方向盘顺时针」），
+                    // 不在表里的行仍按键在图上的上下位置排。
+                    if !rowOrder.isEmpty {
+                        let left = rowOrder.firstIndex(of: lhs.0.id) ?? Int.max
+                        let right = rowOrder.firstIndex(of: rhs.0.id) ?? Int.max
+                        if left != right { return left < right }
+                    }
                     switch (lhs.1, rhs.1) {
-                    case let (l?, r?): r.y == l.y ? l.x < r.x : l.y < r.y
-                    case (nil, _): false
-                    case (_, nil): true
+                    case let (l?, r?): return r.y == l.y ? l.x < r.x : l.y < r.y
+                    case (nil, _): return false
+                    case (_, nil): return true
                     }
                 }
                 .enumerated()
