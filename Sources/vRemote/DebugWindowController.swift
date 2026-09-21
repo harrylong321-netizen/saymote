@@ -141,8 +141,6 @@ private enum ConsoleTheme {
     static let greenDeep = Color(red: 0.055, green: 0.400, blue: 0.208)
     /// 行分隔线比 `lineSoft` 更轻——密集列表里分隔线不该抢视线。
     static let divider = Color(red: 0.933, green: 0.945, blue: 0.957)
-    /// 常态锚点小点：中性灰。绿色只留给「焦点连线」，否则一页十几个绿点又回到噪音。
-    static let anchorDot = Color(red: 0.765, green: 0.792, blue: 0.827)
 }
 
 /// 「减少动态效果」是系统级无障碍开关，悬停反馈要跟着它走。
@@ -776,11 +774,10 @@ private struct KeyMappingView: View {
                         centerColumn(width: layout.imageWidth)
                         mappingColumn(layout.right)
                     }
-                    // 连线在最上层。常态只剩锚点小点，悬停某行才画出那一条曲线；
-                    // 起终点直接取排版算好的折线首尾，几何仍由 RemoteMappingLayout
-                    // 决定，所以零相交自测照常有效。
+                    // 焦点标记在最上层：常态整个透明（静态不画任何东西），
+                    // 悬停行或图上的热区时，只在对应按键上亮一圈。
                     Canvas { context, _ in
-                        drawMappingLines(context: context, layout: layout)
+                        drawFocusMarker(context: context, layout: layout)
                     }
                     .allowsHitTesting(false)
                     anchorHitZones(layout)
@@ -803,58 +800,25 @@ private struct KeyMappingView: View {
         return image.size.width / image.size.height
     }
 
-    // MARK: - 连线
+    // MARK: - 焦点标记
 
-    private func drawMappingLines(
+    /// 悬停高亮：只在被悬停的按键上画「光晕 + 白心绿环」。
+    /// 静态时什么都不画（用户要求：小圆点常态透明、连线全部去掉），
+    /// 行↔按键的对应关系完全靠悬停这一下建立。
+    /// 锚点坐标仍取自排版算好的折线终点，`RemoteMappingLayout` 不用改。
+    private func drawFocusMarker(
         context: GraphicsContext,
         layout: RemoteMappingLayout.Layout
     ) {
         for line in layout.lines {
-            guard let start = line.points.first,
+            guard line.buttonID == hoveredButtonID,
                   let end = line.points.last
             else { continue }
 
-            guard line.buttonID == hoveredButtonID else {
-                // 静默态：只留一个中性小点，标记「这个键有锚点」。
-                let radius: CGFloat = 2.75
-                let dot = Path(ellipseIn: CGRect(
-                    x: end.x - radius,
-                    y: end.y - radius,
-                    width: radius * 2,
-                    height: radius * 2
-                ))
-                let color = line.active
-                    ? ConsoleTheme.anchorDot
-                    : ConsoleTheme.anchorDot.opacity(0.45)
-                context.fill(dot, with: .color(color))
-                context.stroke(dot, with: .color(ConsoleTheme.surface), lineWidth: 1)
-                continue
-            }
-
-            // 焦点态：光晕 + 圆角曲线 + 白心绿环落点。
             let halo = Path(ellipseIn: CGRect(
                 x: end.x - 11, y: end.y - 11, width: 22, height: 22
             ))
             context.fill(halo, with: .color(ConsoleTheme.green.opacity(0.13)))
-
-            let direction: CGFloat = end.x >= start.x ? 1 : -1
-            let bend = max(24, abs(end.x - start.x) * 0.45)
-            // 线停在光晕边缘：环形落点要完整盖住按键，不要扎进按键图形里。
-            let stop = abs(end.x - start.x) > 24
-                ? CGPoint(x: end.x - direction * 12, y: end.y)
-                : end
-            var curve = Path()
-            curve.move(to: start)
-            curve.addCurve(
-                to: stop,
-                control1: CGPoint(x: start.x + direction * bend, y: start.y),
-                control2: CGPoint(x: stop.x - direction * bend, y: stop.y)
-            )
-            context.stroke(
-                curve,
-                with: .color(ConsoleTheme.green),
-                style: StrokeStyle(lineWidth: 2, lineCap: .round)
-            )
 
             let ring = Path(ellipseIn: CGRect(
                 x: end.x - 6, y: end.y - 6, width: 12, height: 12
@@ -864,16 +828,18 @@ private struct KeyMappingView: View {
         }
     }
 
-    /// 图上的锚点热区：悬停圆点反向高亮所在行。
+    /// 图上按键的悬停热区：鼠标移到按键上，对应的行跟着亮。
     /// 必须撑满整块区域，否则超出自身 frame 的热区收不到鼠标事件。
+    /// 32pt 是按最挤的方向盘（上下两键中心距 28pt）取的：盖得住按键、
+    /// 又尽量少跟旁边的热区抢事件。
     private func anchorHitZones(_ layout: RemoteMappingLayout.Layout) -> some View {
         ZStack(alignment: .topLeading) {
             ForEach(layout.lines, id: \.buttonID) { line in
                 if let end = line.points.last {
                     Color.clear
-                        .frame(width: 24, height: 24)
+                        .frame(width: 32, height: 32)
                         .contentShape(Circle())
-                        .offset(x: end.x - 12, y: end.y - 12)
+                        .offset(x: end.x - 16, y: end.y - 16)
                         .onHover { hovering in
                             setHover(hovering ? line.buttonID : nil)
                         }
@@ -984,11 +950,7 @@ private struct KeyMappingView: View {
 
     private var cardHeader: some View {
         HStack(spacing: 8) {
-            pillMenu(text: selectedDevice.title) {
-                ForEach(SupportedRemoteID.allCases) { remote in
-                    Button(remote.title) { selectedDevice = remote }
-                }
-            }
+            deviceSelector
 
             Circle()
                 .fill(deviceConnected ? ConsoleTheme.green : ConsoleTheme.tertiary)
@@ -1032,10 +994,36 @@ private struct KeyMappingView: View {
         .frame(height: 40)
     }
 
+    /// 只暴露一个型号时显示静态名字（X6 暂时隐藏，见 `visibleCases`）；
+    /// 将来恢复多型号支持，这里会自动变回下拉。
+    @ViewBuilder
+    private var deviceSelector: some View {
+        if SupportedRemoteID.visibleCases.count > 1 {
+            pillMenu(text: selectedDevice.title) {
+                ForEach(SupportedRemoteID.visibleCases) { remote in
+                    Button(remote.title) { selectedDevice = remote }
+                }
+            }
+        } else {
+            Text(selectedDevice.title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(ConsoleTheme.text)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 9)
+                .frame(height: 24, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 7).fill(ConsoleTheme.surface))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(ConsoleTheme.line, lineWidth: 0.5)
+                )
+        }
+    }
+
     private var cardFootnote: some View {
         Text(L10n.text(
-            "悬停任意一行，在遥控器图上高亮对应按键",
-            "Hover a row to highlight its button on the remote"
+            "悬停任意一行，或把鼠标移到图上的按键，两边会一起亮",
+            "Hover a row or a button on the remote to link the two"
         ))
             .font(.system(size: 11))
             .foregroundStyle(ConsoleTheme.tertiary)
@@ -1970,13 +1958,22 @@ enum UISnapshot {
             named: "映射页-默认态.png",
             to: directory
         )
-        // 悬停态单独出一张：焦点连线只有 hover 时才画，静态默认态看不到。
+        // 悬停态单独出一张：焦点标记只有 hover 时才画，静态默认态看不到。
         capture(
             KeyMappingView(model: makeModel(), previewHoverButtonID: "07")
                 .frame(width: pageSize.width - 40, height: pageSize.height - 40)
                 .padding(20)
                 .background(ConsoleTheme.panel),
             named: "映射页-悬停确认键.png",
+            to: directory
+        )
+        // 电源键是新补的锚点（机身底部 ⏻），单独出一张便于核对落点。
+        capture(
+            KeyMappingView(model: makeModel(), previewHoverButtonID: "01")
+                .frame(width: pageSize.width - 40, height: pageSize.height - 40)
+                .padding(20)
+                .background(ConsoleTheme.panel),
+            named: "映射页-悬停电源键.png",
             to: directory
         )
         return EXIT_SUCCESS
