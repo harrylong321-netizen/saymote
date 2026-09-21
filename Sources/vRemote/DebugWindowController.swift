@@ -152,14 +152,63 @@ enum LogoAsset {
     static let image: NSImage = {
         let candidates: [URL?] = [
             Bundle.main.url(forResource: "vRemoterLogo", withExtension: "png"),
+            // 从仓库直接跑（未打包）时的回退路径。
             URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-                .appendingPathComponent("Design/vRemoter-Logo-v1/vRemoter-app-icon-v9.png")
+                .appendingPathComponent("Design/Saymote-Logo/saymote-logo-256.png"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent("Design/Saymote-Logo/saymote-app-icon-1024.png")
         ]
         for candidate in candidates.compactMap({ $0 }) {
             if let image = NSImage(contentsOf: candidate) { return image }
         }
         return NSImage(size: NSSize(width: 64, height: 64))
     }()
+}
+
+/// 菜单栏图标。用「template」版本（纯剪影 + `isTemplate = true`），
+/// macOS 会按菜单栏明暗自动反色；彩色图标在深色菜单栏上会糊成一团。
+///
+/// 图片直接内嵌 base64：菜单栏图标必须随 App 一起分发，内嵌就不依赖打包脚本
+/// 有没有拷到资源目录（这个项目已经被打包漏文件坑过一次）。
+enum StatusIconAsset {
+    static let image: NSImage = {
+        let image = NSImage(size: NSSize(width: 18, height: 18))
+        for (base64, points) in [
+            (template1x, NSSize(width: 16, height: 16)),
+            (template2x, NSSize(width: 32, height: 32))
+        ] {
+            guard let data = Data(
+                base64Encoded: base64,
+                options: .ignoreUnknownCharacters
+            ), let rep = NSBitmapImageRep(data: data)
+            else { continue }
+            rep.size = points
+            image.addRepresentation(rep)
+        }
+        image.isTemplate = true
+        return image
+    }()
+
+    private static let template1x = """
+    iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAA
+    xUlEQVQ4jZ2RwQnCQBREXwziTcGDdpBTMFiCFShoVYIFiBWINuFJDHiwAsESgiAIGlkYYQlLdpMP
+    j/kMf4aFBfdE0p6wvaCJpAdg36agD4yBHDgDI2AQEoyla+BhFdyBTeWmtmALPIErcAEKYBdSEEkn
+    wAyYApn2rHLjLUmAuUhCwx1pqmeXopBn3zgnli4VvIlSnn1TW7BSKBWlvMYFR9G64CNaF7xF44KF
+    Ql9hduN5C/7/PAROwEuY3Xj2jXe6ChnM7pwfV4Iv0IkE+a8AAAAASUVORK5CYII=
+    """
+
+    private static let template2x = """
+    iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsTAAALEwEAmpwYAAAB
+    xUlEQVRYhd2XzytEURTHP2/elI2dyMKC/AFKKQp/wWTByr/gP7AeCREKZSzV/A1SNiwo2aEUK2Vr
+    oamZwXsafV+dbsav7rvKqdM579xzOp95957pPvi9RG38oNIpDSoF2RHgAbgHhp21XJt3yF8BUumi
+    Yh15QkTSWM9rBmBZsaLJ8968Jf3AzLsHqwZgSbFpYEC+N4hItgu4UcMt/eoMYAFYl38L9PiEKMiO
+    Aq9qcgFsG4AN4Ex+Aow7tV4AxoCmmpwDOwZgEziV/wxMqCb2CTAENNTkWPueAZSBI/nNPMeyDFwB
+    U0AvcAgcAN1ACbg0I5mbFMyoFT54zlXiL062/Z/wLpFsn7aiCuxLq4r1Obnem/cC1zps2Uha/1o5
+    3iGKsvNqVNdprzt+qhxb40Vi2V0z64l5A4liqXJsjVeAimn4qH0vy8+AKiEAUmDOrM+ZeDCAklkv
+    hQLYM41OgEHpiYnvhQB4NtNQd2LBAJI2UxD0DSQG5E8AUqNBACrfAKj8S4CicxVvmP3PNLstrTk1
+    XiSWnQRezAG0U5BqbdKp8SaR7CxwB9SAJ2lNsVkn17tEsq1PsNbd32r2yZb7l/Jn974f3wnfAOB8
+    vGMgKCDBAAAAAElFTkSuQmCC
+    """
 }
 
 private enum GuideAsset {
@@ -462,11 +511,13 @@ private struct StudioMixerView: View {
                 .frame(height: 68)
             if model.selectedPage == .mixer {
                 Spacer().frame(height: 15)
+                // 三块卡片收紧到贴着内容的高度，把省下的高度让给下面的状态面板
+                // （两段加起来仍然是 518，窗口高度不用动）。
                 mixer
-                    .frame(height: 288)
+                    .frame(height: 190)
                 Spacer().frame(height: 17)
                 statusPanel
-                    .frame(height: 230)
+                    .frame(height: 328)
             } else {
                 Spacer().frame(height: 15)
                 KeyMappingView(model: model)
@@ -495,7 +546,7 @@ private struct StudioMixerView: View {
                 .interpolation(.high)
                 .frame(width: 45, height: 45)
             VStack(alignment: .leading, spacing: 1) {
-                Text("vRemoter")
+                Text("遥控说")
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(ConsoleTheme.text)
                 Text(L10n.text("遥控器语音输入", "Remote microphone input"))
@@ -539,7 +590,8 @@ private struct StudioMixerView: View {
     }
 
     private var statusColor: Color {
-        if model.remoteStreaming { return ConsoleTheme.amber }
+        // 录音中是「一切正常」的状态，统一用绿色；只有真出问题才转红。
+        if model.remoteStreaming { return ConsoleTheme.green }
         if !model.accessibilityGranted || !model.inputMonitoringGranted {
             return ConsoleTheme.red
         }
@@ -566,7 +618,7 @@ private struct StudioMixerView: View {
                 stateText: virtualDeviceState.text,
                 stateColor: virtualDeviceState.color,
                 db: virtualDeviceLevelDB,
-                meterColor: ConsoleTheme.amber
+                meterColor: ConsoleTheme.green
             )
             PipelineArrow()
             AudioStageCard(
@@ -575,7 +627,7 @@ private struct StudioMixerView: View {
                 stateText: outputState.text,
                 stateColor: outputState.color,
                 db: doubaoLevelDB,
-                meterColor: ConsoleTheme.amber
+                meterColor: ConsoleTheme.green
             )
         }
     }
@@ -583,8 +635,14 @@ private struct StudioMixerView: View {
     // 三段看的是同一路音频，区别在门控：左=遥控器回来的原始电平，
     // 中=真正写进虚拟声卡的电平（通路没开/驱动缺失时归零），
     // 右=豆包实际读到的电平（豆包没读它就归零）。一眼能看出断在哪一段。
+    //
+    // 颜色约定：只要在录音，三段的波形和状态一律绿色、状态文字统一叫「录音中」；
+    // 只有真出故障（驱动缺失、豆包没读虚拟声卡）才用红色。
     private var remoteMicState: (text: String, color: Color) {
-        model.remoteLevelDB > -100
+        if model.remoteStreaming {
+            return (L10n.text("录音中", "Recording"), ConsoleTheme.green)
+        }
+        return model.remoteLevelDB > -100
             ? (L10n.text("有声音", "Active"), ConsoleTheme.green)
             : (L10n.text("无声", "Silent"), ConsoleTheme.tertiary)
     }
@@ -594,7 +652,7 @@ private struct StudioMixerView: View {
             return (L10n.text("未安装", "Not installed"), ConsoleTheme.red)
         }
         return model.routeActive
-            ? (L10n.text("正在写入", "Writing"), ConsoleTheme.amber)
+            ? (L10n.text("录音中", "Recording"), ConsoleTheme.green)
             : (L10n.text("空闲", "Idle"), ConsoleTheme.tertiary)
     }
 
@@ -608,8 +666,7 @@ private struct StudioMixerView: View {
         }
         if model.doubaoIsRecording {
             return model.doubaoUsesVRemote
-                ? (L10n.text("豆包正在接收", "Doubao is receiving"),
-                   ConsoleTheme.amber)
+                ? (L10n.text("录音中", "Recording"), ConsoleTheme.green)
                 : (L10n.text("豆包没读它", "Doubao is not using it"),
                    ConsoleTheme.red)
         }
@@ -638,6 +695,8 @@ private struct StudioMixerView: View {
                     : nil,
                 onAction: { model.activeModal = .permission(.doubaoInput) }
             )
+            // 面板变高后把空档均分到行间，别全堆在底部。
+            Spacer(minLength: 0)
             StatusRow(
                 title: L10n.text("音频驱动", "Audio driver"),
                 value: model.driverAvailable
@@ -648,6 +707,8 @@ private struct StudioMixerView: View {
                 action: model.driverAvailable ? nil : L10n.text("打开声音", "Open Sound"),
                 onAction: model.openSoundInputSettings
             )
+            // 面板变高后把空档均分到行间，别全堆在底部。
+            Spacer(minLength: 0)
             StatusRow(
                 title: L10n.text("遥控器连接", "Remote connection"),
                 value: x6Value,
@@ -657,6 +718,8 @@ private struct StudioMixerView: View {
                     : L10n.text("蓝牙设置", "Bluetooth settings"),
                 onAction: { model.activeModal = .permission(.bluetooth) }
             )
+            // 面板变高后把空档均分到行间，别全堆在底部。
+            Spacer(minLength: 0)
             StatusRow(
                 title: L10n.text("辅助功能权限", "Accessibility"),
                 value: model.accessibilityGranted
@@ -666,6 +729,8 @@ private struct StudioMixerView: View {
                 action: model.accessibilityGranted ? nil : L10n.text("去授权", "Grant"),
                 onAction: { model.activeModal = .permission(.accessibility) }
             )
+            // 面板变高后把空档均分到行间，别全堆在底部。
+            Spacer(minLength: 0)
             StatusRow(
                 title: L10n.text("输入监控权限", "Input Monitoring"),
                 value: model.inputMonitoringGranted
@@ -1695,9 +1760,10 @@ private struct AudioStageCard: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .padding(.top, 4)
-            // 标题在上面、实时状态和电平贴着底部，中间留白——三段并排时
-            // 视线正好落在下方那条电平带上。
-            Spacer(minLength: 8)
+            // 标题 → 状态 → 波形 挨着排：之前中间用一个可伸缩 Spacer，卡片一高就
+            // 留出一大片空档（用户反馈「标题和波形中间空太大」）。现在中段是固定
+            // 间距，卡片比内容高出来的部分全落到最下面。
+            Spacer().frame(height: 20)
             HStack(spacing: 6) {
                 Circle()
                     .fill(stateColor)
@@ -1714,14 +1780,13 @@ private struct AudioStageCard: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
-            .padding(.top, 14)
             MeterView(
                 db: db,
                 color: meterColor,
                 count: Self.meterCount,
                 barWidth: Self.meterBarWidth
             )
-            .padding(.top, showTestHint ? 34 : 16)
+            .padding(.top, showTestHint ? 34 : 14)
             .overlay(alignment: .topLeading) {
                 if showTestHint {
                     HStack(spacing: 4) {
@@ -1755,7 +1820,8 @@ private struct AudioStageCard: View {
             .foregroundStyle(ConsoleTheme.tertiary)
             .frame(width: Self.meterWidth)
             .padding(.top, 6)
-            Spacer().frame(height: 22)
+            // 卡片比内容高出来的部分全部收到这里。
+            Spacer(minLength: 12)
         }
         .padding(.horizontal, 18)
         .padding(.top, 20)
@@ -2176,9 +2242,9 @@ enum UISnapshot {
         }
         let directory = arguments[flag + 1]
 
-        func makeModel() -> ConsoleViewModel {
+        func makeModel(_ page: ConsolePage = .mapping) -> ConsoleViewModel {
             let model = ConsoleViewModel()
-            model.selectedPage = .mapping
+            model.selectedPage = page
             // 快照里让设备显示「已连接」，否则状态点和文案是离线态，看不出真实样子。
             model.chromecastConnected = true
             model.hidConnected = true
@@ -2189,6 +2255,25 @@ enum UISnapshot {
         capture(
             StudioMixerView(model: makeModel()),
             named: "映射页-默认态.png",
+            to: directory
+        )
+        capture(
+            StudioMixerView(model: makeModel(.mixer)),
+            named: "音频页-默认态.png",
+            to: directory
+        )
+        // 伪造一个「正在录音」的状态，用来核对绿色波形和「录音中」文案
+        // （真实电平要靠遥控器送音频，静态快照看不到）。
+        let recording = makeModel(.mixer)
+        recording.driverAvailable = true
+        recording.routeActive = true
+        recording.remoteStreaming = true
+        recording.remoteLevelDB = -24
+        recording.doubaoIsRecording = true
+        recording.doubaoInput = "vRemoteDr 2ch"
+        capture(
+            StudioMixerView(model: recording),
+            named: "音频页-录音中.png",
             to: directory
         )
         // 悬停态单独出一张：焦点标记只有 hover 时才画，静态默认态看不到。

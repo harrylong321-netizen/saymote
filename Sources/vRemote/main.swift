@@ -75,12 +75,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let appVersion = Bundle.main.object(
             forInfoDictionaryKey: "CFBundleShortVersionString"
         ) as? String ?? "development"
-        print("[APP] ===== vRemoter \(appVersion) started =====")
+        print("[APP] ===== 遥控说 \(appVersion) started =====")
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        let statusImage = LogoAsset.image.copy() as? NSImage
-        statusImage?.size = NSSize(width: 18, height: 18)
-        statusItem.button?.image = statusImage
+        // 菜单栏用剪影 template 图标（会随明暗自动反色），Dock/应用图标用彩色版本。
+        statusItem.button?.image = StatusIconAsset.image
         statusItem.button?.imagePosition = .imageOnly
         statusItem.button?.title = ""
         // 左键单击直接开控制台，右键（含触控板双指点按）才弹菜单。
@@ -110,7 +109,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         launchAtLoginItem = launch
 
         menu.addItem(.separator())
-        menu.addItem(makeControlMenu())
         menu.addItem(makeLogMenu())
         menu.addItem(makeLanguageMenu())
 
@@ -365,38 +363,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return root
     }
 
-    private func makeControlMenu() -> NSMenuItem {
-        let root = NSMenuItem(title: L10n.text("控制台", "Console"), action: nil, keyEquivalent: "")
-        let submenu = NSMenu(title: L10n.text("控制台", "Console"))
-
-        let open = NSMenuItem(
-            title: L10n.text("打开前台控制台", "Open console"),
-            action: #selector(openDebugWindow),
-            keyEquivalent: ""
-        )
-        open.target = self
-        submenu.addItem(open)
-
-        let stop = NSMenuItem(
-            title: L10n.text("关闭麦克风", "Stop microphone"),
-            action: #selector(stopMicrophone),
-            keyEquivalent: ""
-        )
-        stop.target = self
-        submenu.addItem(stop)
-
-        let restart = NSMenuItem(
-            title: L10n.text("重启 App", "Restart app"),
-            action: #selector(restartApp),
-            keyEquivalent: ""
-        )
-        restart.target = self
-        submenu.addItem(restart)
-
-        root.submenu = submenu
-        return root
-    }
-
     private func makeLanguageMenu() -> NSMenuItem {
         let root = NSMenuItem(
             title: L10n.text("语言", "Language"),
@@ -440,7 +406,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             statusText = L10n.text("等待遥控器", "Waiting for remote")
         }
-        statusItem.button?.toolTip = "vRemoter · \(statusText)"
+        statusItem.button?.toolTip = "遥控说 · \(statusText)"
         headerLabel.title = L10n.text("状态 · \(statusText)", "Status · \(statusText)")
         presentToastIfNeeded()
         debugWindow.update(
@@ -497,10 +463,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.chromecastHID.setRemappingEnabled(enabled)
             }
         }
-    }
-
-    @objc private func openDebugWindow() {
-        debugWindow.show()
     }
 
     /// 状态栏图标：左键单击 → 直接打开控制台；右键单击（触控板双指点按，
