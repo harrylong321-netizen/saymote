@@ -433,23 +433,7 @@ enum MappingLayoutSelfTest {
                     }
                 }
             }
-            emit(
-                "[MAPPING-TEST] \(name) 左栏 \(layout.left.count) 行 / 右栏 "
-                    + "\(layout.right.count) 行，共 \(rows) 行，"
-                    + "\(layout.lines.count) 条连线，相交 \(crossings) 处"
-            )
-            if crossings > 0 {
-                failures += 1
-                emit("[MAPPING-TEST] FAIL \(name)：连线相交")
-            } else {
-                emit("[MAPPING-TEST] PASS \(name)：连线不相交")
-            }
-            if maxRows > RemoteMappingLayout.maxRowsPerColumn {
-                failures += 1
-                emit("[MAPPING-TEST] FAIL \(name)：一栏 \(maxRows) 行，超过 \(RemoteMappingLayout.maxRowsPerColumn) 行")
-            }
-            // 行和它对应的按键必须在机身同一侧，否则悬停时那条焦点连线会横穿
-            // 整个遥控器。中线上（方向盘那一列）的按键放哪边都算合理。
+            // 行和它对应的按键在不在机身同一侧。连线已经不画了，所以这只当参考。
             var strays: [String] = []
             for (side, sideRows) in [("左", layout.left), ("右", layout.right)] {
                 for row in sideRows {
@@ -462,8 +446,52 @@ enum MappingLayoutSelfTest {
                     }
                 }
             }
-            if strays.isEmpty {
-                emit("[MAPPING-TEST] PASS \(name)：没有横穿机身的连线")
+            // 界面上已经不画连线，「相交 / 横穿」看不见了，只当参考信息，
+            // 不再作为失败条件（用户指定的分栏本来就不满足这两条）。
+            emit(
+                "[MAPPING-TEST] \(name) 左栏 \(layout.left.count) 行 / 右栏 "
+                    + "\(layout.right.count) 行，共 \(rows) 行；"
+                    + "参考：相交 \(crossings) 处、不在同侧 \(strays.count) 处"
+            )
+            if maxRows > RemoteMappingLayout.maxRowsPerColumn {
+                failures += 1
+                emit("[MAPPING-TEST] FAIL \(name)：一栏 \(maxRows) 行，超过 \(RemoteMappingLayout.maxRowsPerColumn) 行")
+            }
+            // 栏内行序必须是锚点 y 升序——分栏表就是按这个规则写的，
+            // 顺序一乱，用户指定的那张自上而下的表就对不上了。
+            var disorder: [String] = []
+            for (side, sideRows) in [("左", layout.left), ("右", layout.right)] {
+                let ys = sideRows.compactMap { $0.anchor?.y }
+                if ys != ys.sorted() {
+                    disorder.append("\(side)栏")
+                }
+            }
+            if disorder.isEmpty {
+                emit("[MAPPING-TEST] PASS \(name)：栏内行序按锚点 y 升序")
+            } else {
+                failures += 1
+                emit("[MAPPING-TEST] FAIL \(name)：\(disorder.joined(separator: "、"))行序不是 y 升序")
+            }
+            if let spec = RemoteMappingLayout.userAssignment[remote] {
+                // 用户指定的分栏：断言两栏就是他要的那张表。
+                var wrong: [String] = []
+                for row in layout.left where spec[row.button.id] != true {
+                    wrong.append("\(row.button.id) 该在右栏")
+                }
+                for row in layout.right where spec[row.button.id] != false {
+                    wrong.append("\(row.button.id) 该在左栏")
+                }
+                if wrong.isEmpty {
+                    emit("[MAPPING-TEST] PASS \(name)：分栏与指定的表一致")
+                } else {
+                    failures += 1
+                    emit("[MAPPING-TEST] FAIL \(name)：分栏与指定不一致 —— \(wrong.joined(separator: "、"))")
+                }
+            } else if crossings > 0 {
+                failures += 1
+                emit("[MAPPING-TEST] FAIL \(name)：求解器分栏出现 \(crossings) 处相交")
+            } else if strays.isEmpty {
+                emit("[MAPPING-TEST] PASS \(name)：求解器分栏零相交且不横穿机身")
             } else {
                 failures += 1
                 emit("[MAPPING-TEST] FAIL \(name)：横穿机身 \(strays.joined(separator: "、"))")

@@ -909,11 +909,19 @@ private struct KeyMappingView: View {
             }
             Spacer(minLength: 12)
             VStack(alignment: .trailing, spacing: 6) {
-                pillMenu(text: model.inputTriggerKey.title, width: 150) {
-                    ForEach(InputTriggerKey.allCases) { trigger in
-                        Button(trigger.title) { model.setInputTrigger(trigger) }
+                pillMenu(
+                    text: model.inputTriggerKey.title,
+                    width: 150,
+                    items: InputTriggerKey.allCases.map {
+                        MappingMenuItem(
+                            title: $0.title,
+                            checked: $0 == model.inputTriggerKey
+                        )
+                    },
+                    onSelect: { index in
+                        model.setInputTrigger(InputTriggerKey.allCases[index])
                     }
-                }
+                )
                 .disabled(model.remoteStreaming)
                 if model.inputTriggerKey == .function {
                     Label(
@@ -935,41 +943,32 @@ private struct KeyMappingView: View {
 
     /// 「值 + chevron」的小胶囊。用来替掉系统下拉框——原生蓝底蓝箭头在这页会跟
     /// 语义绿打架，而这一页有十几个下拉，蓝色一多就没有强调色可言了。
-    ///
-    /// 外观必须画在 `Menu` **外面**：`Menu` 的 label 里只要出现 `Image`，SwiftUI
-    /// 就按 LabelStyle 把它当图标挪到文字前面；label 自带的背景/描边也会被丢掉
-    /// （实测，见 `--ui-controls-trial`）。所以这里的约定是「Menu 只管弹菜单，
-    /// 胶囊和箭头都由外面画」。
-    /// `width` 给了就把箭头推到最右，没给就紧贴文字（设备名长度不定）。
-    private func pillMenu<Content: View>(
+    /// 整块胶囊都是点击热区（用户反馈不好点），所以走 `MappingMenuRow`。
+    private func pillMenu(
         text: String,
-        width: CGFloat? = nil,
-        @ViewBuilder menu: () -> Content
+        width: CGFloat,
+        items: [MappingMenuItem],
+        onSelect: @escaping (Int) -> Void
     ) -> some View {
-        HStack(spacing: 6) {
-            Menu(content: menu) {
+        MappingMenuRow(items: items, onSelect: onSelect) {
+            HStack(spacing: 6) {
                 Text(text)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(ConsoleTheme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            if width != nil {
                 Spacer(minLength: 0)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(ConsoleTheme.tertiary)
             }
-            Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(ConsoleTheme.tertiary)
+            .padding(.horizontal, 9)
+            .frame(width: width, height: 24, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 7).fill(ConsoleTheme.surface))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7).stroke(ConsoleTheme.line, lineWidth: 0.5)
+            )
         }
-        .padding(.horizontal, 9)
-        .frame(width: width, height: 24, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 7).fill(ConsoleTheme.surface))
-        .overlay(
-            RoundedRectangle(cornerRadius: 7).stroke(ConsoleTheme.line, lineWidth: 0.5)
-        )
     }
 
     // MARK: - 卡片头部（原设备条并进来）
@@ -1025,11 +1024,16 @@ private struct KeyMappingView: View {
     @ViewBuilder
     private var deviceSelector: some View {
         if SupportedRemoteID.visibleCases.count > 1 {
-            pillMenu(text: selectedDevice.title) {
-                ForEach(SupportedRemoteID.visibleCases) { remote in
-                    Button(remote.title) { selectedDevice = remote }
+            pillMenu(
+                text: selectedDevice.title,
+                width: 190,
+                items: SupportedRemoteID.visibleCases.map {
+                    MappingMenuItem(title: $0.title, checked: $0 == selectedDevice)
+                },
+                onSelect: { index in
+                    selectedDevice = SupportedRemoteID.visibleCases[index]
                 }
-            }
+            )
         } else {
             Text(selectedDevice.title)
                 .font(.system(size: 12, weight: .medium))
@@ -1235,6 +1239,83 @@ private struct AnchorHoverTracker: NSViewRepresentable {
     }
 }
 
+/// 下拉里的一个条目。
+private struct MappingMenuItem {
+    let title: String
+    let checked: Bool
+}
+
+/// 「整块区域可点」的下拉。
+///
+/// 为什么不用 SwiftUI 的 `Menu`（实测过三件事）：
+/// 1. label 里放 `Image` 会被 LabelStyle 当图标挪到文字**前面**；
+/// 2. label 里放**第二个** `Text` 直接不渲染；
+/// 3. label 只按自身理想宽度贴在左边，`maxWidth: .infinity` 也撑不开——
+///    所以「热区和悬停变绿的范围一样大」用 `Menu` 做不到（用户反馈下拉不好点）。
+///
+/// 改成一个普通 Button 铺满整行/整块胶囊，点击时自己弹 `NSMenu`：
+/// 热区就是 Button 的 label 范围，完全可控，label 里也能自由摆图标、文字和箭头。
+private struct MappingMenuRow<Label: View>: View {
+    let items: [MappingMenuItem]
+    let onSelect: (Int) -> Void
+    let label: Label
+
+    @State private var actionTarget = MenuActionTarget()
+
+    init(
+        items: [MappingMenuItem],
+        onSelect: @escaping (Int) -> Void,
+        @ViewBuilder label: () -> Label
+    ) {
+        self.items = items
+        self.onSelect = onSelect
+        self.label = label()
+    }
+
+    var body: some View {
+        Button {
+            present()
+        } label: {
+            label.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func present() {
+        actionTarget.handler = onSelect
+        let menu = NSMenu()
+        for (index, item) in items.enumerated() {
+            let entry = NSMenuItem(
+                title: item.title,
+                action: #selector(MenuActionTarget.fire(_:)),
+                keyEquivalent: ""
+            )
+            entry.tag = index
+            entry.target = actionTarget
+            entry.state = item.checked ? .on : .off
+            menu.addItem(entry)
+        }
+        // 在鼠标位置弹出，但整体下移一行的高度：这样菜单不会正好压在鼠标下面
+        // （否则松手可能直接选中光标底下那一项）。靠近窗口底部时 AppKit 会自动
+        // 翻到上方去。
+        let mouse = NSEvent.mouseLocation
+        menu.popUp(
+            positioning: nil,
+            at: NSPoint(x: mouse.x - 12, y: mouse.y - 26),
+            in: nil
+        )
+    }
+
+    /// `NSMenu` 的 target：把选中的行号回调出去。
+    final class MenuActionTarget: NSObject {
+        var handler: ((Int) -> Void)?
+
+        @objc func fire(_ sender: NSMenuItem) {
+            handler?(sender.tag)
+        }
+    }
+}
+
 private struct MappingRow: View {
     @ObservedObject private var mappings = RemoteMappingStore.shared
     @State private var showRecorder = false
@@ -1248,20 +1329,22 @@ private struct MappingRow: View {
     private let verticalInset: CGFloat = 2
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: button.symbol)
-                .font(.system(size: 11))
-                .frame(width: 15)
-                .foregroundStyle(iconColor)
-                .accessibilityHidden(true)
-            Text(button.title)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(ConsoleTheme.text)
-                .lineLimit(1)
-                .minimumScaleFactor(0.9)
-                .frame(width: 76, alignment: .leading)
-            Spacer(minLength: 8)
-            valueArea
+        HStack(spacing: 6) {
+            // 可改的行：整行都是菜单的 label，点击热区和「悬停变绿的范围」一样大
+            // （用户反馈下拉不好点）。尾部的小按钮放在 Menu 外面，保留自己的小热区。
+            rowMain
+            if button.remappable, !button.voiceControlled, currentTarget == .custom {
+                secondaryActionButton(
+                    symbol: "record.circle",
+                    help: L10n.text("重新录制按键", "Record again")
+                ) { showRecorder = true }
+            } else if button.remappable, !button.voiceControlled, currentTarget == .openApp {
+                secondaryActionButton(
+                    symbol: "app.badge",
+                    help: L10n.text("重新选择应用", "Choose another app"),
+                    action: chooseApp
+                )
+            }
         }
         .padding(.horizontal, 10)
         .frame(height: RemoteMappingLayout.rowHeight - verticalInset * 2)
@@ -1290,61 +1373,78 @@ private struct MappingRow: View {
         }
     }
 
+    /// 可改的行：整行都是下拉的热区（和悬停变绿的范围一样大）。
     @ViewBuilder
-    private var valueArea: some View {
-        if !button.remappable {
-            Text(L10n.text("设备内部功能", "Device-only function"))
-                .font(.system(size: 11.5))
-                .foregroundStyle(ConsoleTheme.tertiary)
-        } else if button.voiceControlled {
-            Text(RemoteMappingTarget.doubaoVoice.title)
-                .font(.system(size: 11.5, weight: isHighlighted ? .medium : .regular))
-                .foregroundStyle(isHighlighted ? ConsoleTheme.greenDeep : ConsoleTheme.green)
-        } else {
-            HStack(spacing: 4) {
-                targetMenu
-                if currentTarget == .custom {
-                    secondaryActionButton(
-                        symbol: "record.circle",
-                        help: L10n.text("重新录制按键", "Record again")
-                    ) { showRecorder = true }
-                } else if currentTarget == .openApp {
-                    secondaryActionButton(
-                        symbol: "app.badge",
-                        help: L10n.text("重新选择应用", "Choose another app"),
-                        action: chooseApp
-                    )
-                }
+    private var rowMain: some View {
+        if button.remappable, !button.voiceControlled {
+            MappingMenuRow(
+                items: mappingMenuItems,
+                onSelect: { index in select(mappingMenuTargets[index]) }
+            ) {
+                rowLabel(editable: true)
             }
+        } else {
+            rowLabel(editable: false)
         }
     }
 
-    /// 「当前值 + chevron」的文字菜单：替掉系统下拉框，去掉那一片蓝色。
-    /// 箭头同样画在 `Menu` 外面，理由见 `pillMenu`。
-    private var targetMenu: some View {
-        HStack(spacing: 4) {
-            Menu {
-                ForEach(RemoteMappingTarget.allCases.filter { $0 != .doubaoVoice }) { target in
-                    // 只有「当前选中的那一项」显示动态名字（自定义按键的组合、所选 App
-                    // 的名字）。其它项一律显示目标本身的名字，否则每一项都会显示成当前
-                    // 目标的标题（曾导致列表里出现两个「禁用」、两个「系统音量＋」）。
-                    Button(targetLabel(for: target)) { select(target) }
-                }
-            } label: {
+    /// 下拉里列出的目标（语音键的目标是固定的，不列进来）。
+    private var mappingMenuTargets: [RemoteMappingTarget] {
+        RemoteMappingTarget.allCases.filter { $0 != .doubaoVoice }
+    }
+
+    private var mappingMenuItems: [MappingMenuItem] {
+        let current = currentTarget
+        return mappingMenuTargets.map { target in
+            // 只有「当前选中的那一项」显示动态名字（自定义按键的组合、所选 App 的
+            // 名字）。其它项一律显示目标本身的名字，否则每一项都会显示成当前目标
+            // 的标题（曾导致列表里出现两个「禁用」、两个「系统音量＋」）。
+            MappingMenuItem(
+                title: targetLabel(for: target),
+                checked: target == current
+            )
+        }
+    }
+
+    /// 行的内容：图标 + 名称 +（可改时）右侧的值与箭头。
+    private func rowLabel(editable: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: button.symbol)
+                .font(.system(size: 11))
+                .frame(width: 15)
+                .foregroundStyle(iconColor)
+                .accessibilityHidden(true)
+            Text(button.title)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(ConsoleTheme.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.9)
+                .frame(width: 76, alignment: .leading)
+            Spacer(minLength: 8)
+            if !button.remappable {
+                Text(L10n.text("设备内部功能", "Device-only function"))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(ConsoleTheme.tertiary)
+            } else if button.voiceControlled {
+                Text(RemoteMappingTarget.doubaoVoice.title)
+                    .font(.system(size: 11.5, weight: isHighlighted ? .medium : .regular))
+                    .foregroundStyle(
+                        isHighlighted ? ConsoleTheme.greenDeep : ConsoleTheme.green
+                    )
+            } else {
                 Text(mappings.targetTitle(for: button, remote: remote))
                     .font(.system(size: 11.5, weight: isHighlighted ? .medium : .regular))
                     .foregroundStyle(valueColor)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(
+                        isHighlighted ? ConsoleTheme.greenDeep : ConsoleTheme.tertiary
+                    )
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(isHighlighted ? ConsoleTheme.greenDeep : ConsoleTheme.tertiary)
         }
-        .accessibilityLabel(L10n.text("\(button.title) 的动作", "\(button.title) action"))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func secondaryActionButton(

@@ -561,6 +561,32 @@ enum RemoteMappingLayout {
     private static var assignmentCache: [SupportedRemoteID: [String: Bool]] = [:]
     private static let cacheLock = NSLock()
 
+    /// 用户指定的分栏。给了就完全照办，不再走求解器——连线已经全部去掉，
+    /// 「不相交 / 不横穿」这两条几何约束在界面上已经看不见了，所以让位给手感。
+    /// 栏内行序仍按锚点 y 自动排（左栏那张表正好就是 y 序）。
+    /// 值 `true` = 左栏。没列进来的型号仍走求解器（X6 目前是这种情况）。
+    static let userAssignment: [SupportedRemoteID: [String: Bool]] = [
+        .chromecast: [
+            // 右栏：方向盘五个键 + 音量加减
+            "03": false,   // 方向上
+            "04": false,   // 方向下
+            "05": false,   // 方向左
+            "06": false,   // 方向右
+            "07": false,   // 确认
+            "0C": false,   // 音量＋
+            "0D": false,   // 音量－
+            // 左栏：其余八个，自上而下 返回、语音、Home、静音、YouTube、Netflix、电源、信源
+            "0B": true,
+            "voice": true,
+            "0A": true,
+            "08": true,
+            "0E": true,
+            "0F": true,
+            "01": true,
+            "11": true
+        ]
+    ]
+
     /// 斜线离行边缘多远开始拐成横线；横线之间至少留开的间隔。
     private static let bendOffset: CGFloat = 26
     private static let minHorizontalLength: CGFloat = 12
@@ -590,7 +616,7 @@ enum RemoteMappingLayout {
             }
         }
         let geometry = geometry(width: width, imageAspect: imageAspect)
-        let assignment = cachedAssignment(
+        let assignment = userAssignment[remote] ?? cachedAssignment(
             remote: remote,
             anchored: anchored,
             unanchoredCount: unanchored.count,
