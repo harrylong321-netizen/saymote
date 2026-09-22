@@ -8,6 +8,13 @@ set -u
 
 /usr/bin/killall -9 coreaudiod 2>/dev/null || true
 /usr/bin/pkill -TERM -x vRemote 2>/dev/null || true
+# 等旧进程真的退出再往下走：下面用 `open -n` 强制开新实例，如果这个还活着，
+# 就会同时存在两个实例（实测出现过，两个进程抢蓝牙和虚拟声卡）。
+for _ in {1..25}; do
+  /usr/bin/pgrep -x vRemote >/dev/null 2>&1 || break
+  /bin/sleep 0.2
+done
+/usr/bin/pkill -KILL -x vRemote 2>/dev/null || true
 
 # 早期版本装在 /Applications/vRemote.app。改名后必须清掉旧的那份，
 # 否则系统里会同时存在两条应用记录（权限列表里也会看到旧名字）。

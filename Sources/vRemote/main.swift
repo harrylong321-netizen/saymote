@@ -65,7 +65,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         resetSessionOnConnect: true
     )
 
+    /// 自动重启时传给新实例的参数：告诉它「你是来接替某个 pid 的」。
+    private static let replacingArgument = "--replacing="
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 单实例保护：`open -n` 可以强开第二个实例（安装脚本、自动重启都用它），
+        // 两个实例会同时抢蓝牙和虚拟声卡——实测出现过两个进程交叉写同一份日志、
+        // 抢设备。这里让后启动的那个自己退出，并把先启动的激活到前面。
+        enforceSingleInstance()
         NSApp.setActivationPolicy(.accessory)
         AppStorage.prepare()
         AppAnalytics.configure()
@@ -562,15 +569,49 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// 单实例保护（见 `applicationDidFinishLaunching` 里的调用处注释）。
+    private func enforceSingleInstance() {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return }
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        // 自己换代时不把自己拦掉：等旧实例退出（最多 3 秒），赖着不走就收掉它。
+        if let raw = CommandLine.arguments.first(where: {
+            $0.hasPrefix(Self.replacingArgument)
+        }), let oldPID = pid_t(raw.dropFirst(Self.replacingArgument.count)),
+           oldPID != myPID {
+            let deadline = Date().addingTimeInterval(3)
+            while Date() < deadline,
+                  let old = NSRunningApplication(processIdentifier: oldPID),
+                  !old.isTerminated {
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            if let old = NSRunningApplication(processIdentifier: oldPID),
+               !old.isTerminated {
+                old.forceTerminate()
+            }
+        }
+        let others = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != myPID && !$0.isTerminated }
+        guard let keeper = others.min(by: { $0.processIdentifier < $1.processIdentifier })
+        else { return }
+        print("[APP] 已有实例在运行（pid=\(keeper.processIdentifier)），本次启动退出")
+        keeper.activate(options: [.activateIgnoringOtherApps])
+        exit(0)
+    }
+
     private func restartAppNow() {
         stopMicrophoneNow()
         let bundleURL = Bundle.main.bundleURL
         // `NSWorkspace.openApplication` may reuse the current instance for an
         // accessory app. Use `/usr/bin/open -n` so macOS creates a genuinely
-        // new process before this one exits.
+        // new process before this one exits. 带上 --replacing 让新实例知道
+        // 「旧的那个是我，等我退出」，避免被单实例保护误杀。
         let launcher = Process()
         launcher.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        launcher.arguments = ["-n", bundleURL.path]
+        launcher.arguments = [
+            "-n", bundleURL.path,
+            "--args", Self.replacingArgument + "\(ProcessInfo.processInfo.processIdentifier)"
+        ]
         do {
             try launcher.run()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
