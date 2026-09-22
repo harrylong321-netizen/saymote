@@ -68,7 +68,51 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 自动重启时传给新实例的参数：告诉它「你是来接替某个 pid 的」。
     private static let replacingArgument = "--replacing="
 
+    /// 权限自检（诊断用，不影响正常流程）：
+    ///   /Applications/遥控说.app/Contents/MacOS/vRemote --permission-probe
+    /// 必须用**装好的**那个 .app 里的可执行文件跑，TCC 认的是它自己的签名。
+    private func printPermissionProbe() {
+        // 走 FileHandle：`exit()` 不会 flush stdio 缓冲，print 的内容会丢。
+        var lines: [String] = []
+        lines.append("[PROBE] bundle              = \(Bundle.main.bundlePath)")
+        lines.append("[PROBE] AXIsProcessTrusted  = \(AXIsProcessTrusted())")
+        lines.append("[PROBE] CGPreflightListen   = \(CGPreflightListenEventAccess())")
+        lines.append("[PROBE] IOHIDCheck(listen)  = \(IOHIDCheckAccess(kIOHIDRequestTypeListenEvent).rawValue)")
+        lines.append("[PROBE] IOHIDCheck(post)    = \(IOHIDCheckAccess(kIOHIDRequestTypePostEvent).rawValue)")
+        // 申请接口的返回值：true = 系统认为已授权（可能只是被辅助功能涵盖）
+        lines.append("[PROBE] IOHIDRequest(listen) = \(IOHIDRequestAccess(kIOHIDRequestTypeListenEvent))")
+        FileHandle.standardOutput.write(Data((lines.joined(separator: "\n") + "\n").utf8))
+    }
+
+    /// 首次启动主动「申请」一次输入监控。
+    ///
+    /// 系统只会把**申请过**的 App 列进「输入监听」列表，而且申请必须在
+    /// 辅助功能授权之前发生才有效：一旦辅助功能已授权，系统认为输入监听
+    /// 已被涵盖，既不提示也不再登记（这也是它一直显示「已授权」的由来）。
+    private func requestInputMonitoringOnce() {
+        // 按「版本」记一次：换版本再问一次，用户拒绝后也不会每次启动都弹。
+        let key = "vRemoter.listenEventRequestedVersion"
+        let version = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString"
+        ) as? String ?? "?"
+        guard UserDefaults.standard.string(forKey: key) != version else { return }
+        UserDefaults.standard.set(version, forKey: key)
+        // 两个申请接口都调：
+        //   CGRequestListenEventAccess 会在系统里「登记」本 App 并弹提示
+        //     （这正是「输入监听」列表里出现本 App 的前提）；
+        //   IOHIDRequestAccess 与 App 实际使用的 IOHIDManager 同源。
+        // 用 print：App 启动后 stdout 已被重定向到日志文件，FileHandle 写会丢。
+        let cg = CGRequestListenEventAccess()
+        let hid = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+        print("[APP] 申请输入监控权限：CG=\(cg) IOHID=\(hid)")
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if CommandLine.arguments.contains("--permission-probe") {
+            printPermissionProbe()
+            exit(0)
+        }
+        requestInputMonitoringOnce()
         // 单实例保护：`open -n` 可以强开第二个实例（安装脚本、自动重启都用它），
         // 两个实例会同时抢蓝牙和虚拟声卡——实测出现过两个进程交叉写同一份日志、
         // 抢设备。这里让后启动的那个自己退出，并把先启动的激活到前面。

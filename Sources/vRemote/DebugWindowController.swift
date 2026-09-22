@@ -95,6 +95,10 @@ enum PermissionKind: String, Identifiable, CaseIterable {
                 L10n.text(
                     "找到「遥控说」并打开开关。macOS 提示重新启动时允许它重新打开。",
                     "Enable Saymote, then allow macOS to relaunch it when prompted."
+                ),
+                L10n.text(
+                    "若已授权「辅助功能」，系统会认为本项已被涵盖：列表里可能找不到「遥控说」，属正常现象，可直接跳过。",
+                    "If Accessibility is already granted, macOS treats this as covered — Saymote may not be listed, and you can skip it."
                 )
             ]
         case .bluetooth:
@@ -329,6 +333,7 @@ private final class ConsoleViewModel: ObservableObject {
     var onPermissionGranted: (() -> Void)?
 
     private var lastPermissionSnapshot: (Bool, Bool, Bool)?
+    private var lastLoggedPermissions: (Bool, Bool, Bool)?
 
     var doubaoUsesVRemote: Bool { doubaoInput.contains("vRemoteDr 2ch") }
 
@@ -391,6 +396,17 @@ private final class ConsoleViewModel: ObservableObject {
     private func notePermissionGrants() {
         let snapshot = (accessibilityGranted, inputMonitoringGranted, bluetoothGranted)
         defer { lastPermissionSnapshot = snapshot }
+        // 读数变化时留一行日志：这几个值最容易踩坑（比如辅助功能会让输入监控的
+        // 查询接口也返回 true），带上原始 API 返回值便于定位。
+        let alreadyLogged = lastLoggedPermissions.map { $0 == snapshot } ?? false
+        if !alreadyLogged {
+            lastLoggedPermissions = snapshot
+            print(
+                "[PERM] 辅助功能=\(snapshot.0) 输入监控=\(snapshot.1) 蓝牙=\(snapshot.2)"
+                    + " | AX=\(AXIsProcessTrusted()) CG=\(CGPreflightListenEventAccess())"
+                    + " IOHID=\(IOHIDCheckAccess(kIOHIDRequestTypeListenEvent).rawValue)"
+            )
+        }
         guard let previous = lastPermissionSnapshot else { return }
         let gained = (!previous.0 && snapshot.0)
             || (!previous.1 && snapshot.1)
@@ -423,6 +439,9 @@ private final class ConsoleViewModel: ObservableObject {
             // 会弹系统提示，并把 App 登记进「输入监听」列表。
             // 用 IOHID 的请求接口，与上面的检测、以及 App 实际用的
             // IOHIDManager 保持同一套权限语义。
+            // 两个都调：CG 的那个负责在系统里登记本 App（列表里才会出现
+            // 可勾选的那一行），IOHID 的与 App 实际的 IOHIDManager 同源。
+            _ = CGRequestListenEventAccess()
             _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
         case .accessibility:
             // 带 prompt 的查询同样会登记进「辅助功能」列表。
@@ -819,6 +838,23 @@ private struct StudioMixerView: View {
         .background(panelBackground(ConsoleTheme.surface, radius: 19))
     }
 
+    /// 输入监控那一行显示的文案。
+    ///
+    /// 关键事实：macOS 里「辅助功能」会**连带**让输入监控的查询接口返回 true
+    /// （实测：辅助功能一开，CGPreflightListenEventAccess 和 IOHIDCheckAccess
+    /// 都说 granted），而且此时系统认为输入监听已被涵盖——既不再提示，也不会
+    /// 把 App 列进「输入监听」列表。所以辅助功能开着时这一行显示「已授权」
+    /// 是符合系统语义的，不是误报。这里把来源写明，免得用户以为漏配了一项。
+    private var inputMonitoringValue: String {
+        guard model.inputMonitoringGranted else {
+            return L10n.text("无法监听遥控器语音键", "Cannot monitor remote voice key")
+        }
+        return model.accessibilityGranted
+            ? L10n.text("已授权（由辅助功能涵盖）",
+                        "Granted (covered by Accessibility)")
+            : L10n.text("已授权", "Granted")
+    }
+
     /// 状态 / 权限五行（只读，出问题给修复入口）。单独抽一层，
     /// 免得 ViewBuilder 一层堆超过 10 个子视图。行间用 Spacer 均分空档。
     @ViewBuilder
@@ -868,9 +904,7 @@ private struct StudioMixerView: View {
             )
             StatusRow(
                 title: L10n.text("输入监控权限", "Input Monitoring"),
-                value: model.inputMonitoringGranted
-                    ? L10n.text("已授权", "Granted")
-                    : L10n.text("无法监听遥控器语音键", "Cannot monitor remote voice key"),
+                value: inputMonitoringValue,
                 tone: model.inputMonitoringGranted ? .good : .warning,
                 action: model.inputMonitoringGranted ? nil : L10n.text("去授权", "Grant"),
                 onAction: { model.activeModal = .permission(.inputMonitoring) }
