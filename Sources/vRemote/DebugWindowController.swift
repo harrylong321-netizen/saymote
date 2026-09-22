@@ -325,6 +325,10 @@ private final class ConsoleViewModel: ObservableObject {
     var onRemoteMappingEnabledChanged: ((SupportedRemoteID, Bool) -> Void)?
     var onLanguageChanged: ((AppLanguage) -> Void)?
     var onLaunchAtLoginChanged: ((Bool) -> Void)?
+    /// 权限从不通过变成通过时回调一次（App 层据此重启进程，见 `restartForNewPermission`）。
+    var onPermissionGranted: (() -> Void)?
+
+    private var lastPermissionSnapshot: (Bool, Bool, Bool)?
 
     var doubaoUsesVRemote: Bool { doubaoInput.contains("vRemoteDr 2ch") }
 
@@ -372,6 +376,22 @@ private final class ConsoleViewModel: ObservableObject {
         } else {
             bluetoothGranted = true
         }
+        notePermissionGrants()
+    }
+
+    /// 比对上次读数：只要出现「没通过 → 通过」就通知 App 层。
+    /// 蓝牙与输入监控在 macOS 上都必须重启进程才真正生效——没有这个通知，
+    /// 用户打完勾得自己按一下遥控器（或手动重启）异常才会消失。
+    private func notePermissionGrants() {
+        let snapshot = (accessibilityGranted, inputMonitoringGranted, bluetoothGranted)
+        defer { lastPermissionSnapshot = snapshot }
+        guard let previous = lastPermissionSnapshot else { return }
+        let gained = (!previous.0 && snapshot.0)
+            || (!previous.1 && snapshot.1)
+            || (!previous.2 && snapshot.2)
+        if gained {
+            onPermissionGranted?()
+        }
     }
 
     func openSettings(for kind: PermissionKind) {
@@ -380,9 +400,29 @@ private final class ConsoleViewModel: ObservableObject {
             activeModal = nil
             return
         }
+        requestPermissionIfNeeded(kind)
         guard let url = kind.settingsURL else { return }
         NSWorkspace.shared.open(url)
         activeModal = nil
+    }
+
+    /// 打开系统设置之前，先「请求」一次对应权限。
+    ///
+    /// 这步不能省：系统只把**请求过**这个权限的 App 列进对应的权限列表。
+    /// 之前只做 `CGPreflightListenEventAccess()`（纯查询）的话，「输入监听」
+    /// 列表里根本不会出现本 App，用户找不到可以打勾的那一行（实测如此）。
+    private func requestPermissionIfNeeded(_ kind: PermissionKind) {
+        switch kind {
+        case .inputMonitoring:
+            // 会弹系统提示，并把 App 登记进「输入监听」列表。
+            _ = CGRequestListenEventAccess()
+        case .accessibility:
+            // 带 prompt 的查询同样会登记进「辅助功能」列表。
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+            _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
+        case .bluetooth, .doubaoInput:
+            break
+        }
     }
 
     private func openDoubaoSettings() {
@@ -421,6 +461,9 @@ private final class ConsoleViewModel: ObservableObject {
 
 final class DebugWindowController: NSWindowController, NSWindowDelegate {
     private static let windowSize = NSSize(width: 775, height: 658)
+
+    /// 权限刚从不通过变成通过（由 ConsoleViewModel 比对读数后回调）。
+    var onPermissionGranted: (() -> Void)?
 
     var onStopMicrophone: (() -> Void)?
     var onRestartApp: (() -> Void)?
@@ -471,6 +514,9 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
         }
         model.onLaunchAtLoginChanged = { [weak self] enabled in
             self?.onLaunchAtLoginChanged?(enabled)
+        }
+        model.onPermissionGranted = { [weak self] in
+            self?.onPermissionGranted?()
         }
         window.contentView = NSHostingView(
             rootView: StudioMixerView(model: model)

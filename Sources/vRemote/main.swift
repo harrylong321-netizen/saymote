@@ -459,6 +459,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         debugWindow.onLanguageChanged = { [weak self] language in
             self?.setLanguageAndRestart(language)
         }
+        debugWindow.onPermissionGranted = { [weak self] in
+            self?.restartForNewPermission()
+        }
         debugWindow.onLaunchAtLoginChanged = { [weak self] enabled in
             guard let self else { return }
             do {
@@ -528,6 +531,35 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func restartApp() {
         restartAppNow()
+    }
+
+    private var permissionRestartCount = 0
+    private var lastPermissionRestartAt: Date?
+
+    /// 检测到权限刚被打开 → 自动重启一次，让蓝牙 / 输入监控真正生效。
+    ///
+    /// 为什么必须重启：macOS 的蓝牙授权、输入监控授权都要**重启进程**才生效
+    /// （系统自己也会提示「退出并重新打开」）。之前不重启的话，用户打完勾界面
+    /// 上仍显示异常，得等遥控器再发一次广播才恢复——那条路太绕。
+    /// 防抖 3 秒、每次启动最多 3 次，避免用户连续勾选时反复重启；
+    /// 正在录音时不打断。
+    private func restartForNewPermission() {
+        guard permissionRestartCount < 3 else { return }
+        guard !remoteStreaming else { return }
+        let now = Date()
+        if let last = lastPermissionRestartAt, now.timeIntervalSince(last) < 3 {
+            return
+        }
+        lastPermissionRestartAt = now
+        permissionRestartCount += 1
+        print("[APP] 权限刚被授予 → 重启应用使其生效")
+        ToastPresenter.shared.show(
+            L10n.text("权限已开启，正在重启应用…", "Permission granted — restarting…"),
+            symbolName: "checkmark.circle.fill"
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
+            self?.restartAppNow()
+        }
     }
 
     private func restartAppNow() {
