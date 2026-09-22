@@ -429,6 +429,23 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return root
     }
 
+    private var warnedDoubaoInputDevice = false
+
+    /// 豆包在录音，但用的不是我们的虚拟声卡——这时候遥控器说什么它都收不到，
+    /// 用户体感就是「按了没反应」。弹一次提示并引导去改输入设备（每次录音
+    /// 期间只提醒一次，避免刷屏）。
+    private func warnDoubaoWrongInputDevice(actual: String) {
+        guard !warnedDoubaoInputDevice else { return }
+        warnedDoubaoInputDevice = true
+        ToastPresenter.shared.show(
+            L10n.text(
+                "豆包正在用「\(actual)」，收不到遥控器的声音。请在豆包语音输入里把麦克风切成「虚拟声卡」。",
+                "Doubao is using \(actual) and cannot hear the remote. Switch its microphone to the Virtual sound card."
+            ),
+            symbolName: "mic.slash.fill"
+        )
+    }
+
     private func updateStatus() {
         let anyHID = x6HIDConnected || chromecastHIDConnected
         let anyBLE = x6BLEConnected || chromecastBLEConnected
@@ -440,8 +457,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             statusText = warning
         } else if doubaoIsRecording && !doubaoUsesVRemote {
             statusText = L10n.text("豆包输入设备错误", "Incorrect Doubao input")
+            warnDoubaoWrongInputDevice(actual: doubaoSnapshot.deviceSummary)
         } else if remoteStreaming {
             statusText = L10n.text("遥控器录音中", "Remote recording")
+            warnedDoubaoInputDevice = false
         } else if anyHID && anyBLE {
             statusText = L10n.text("已就绪", "Ready")
         } else if anyHID || anyBLE {
