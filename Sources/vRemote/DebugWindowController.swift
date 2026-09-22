@@ -165,18 +165,21 @@ enum LogoAsset {
     }()
 }
 
-/// 菜单栏图标。用「template」版本（纯剪影 + `isTemplate = true`），
-/// macOS 会按菜单栏明暗自动反色；彩色图标在深色菜单栏上会糊成一团。
+/// 菜单栏图标。用品牌素材里的「plate」版：圆角方框 + 里面的遥控器，
+/// 整体是个正方形（用户要求「外面加个框，像正方形一样」）。
+///
+/// 不用 template 剪影版（`isTemplate = true` 会把彩色压成纯黑白，方框和
+/// 里面的遥控器会糊成一整块实心），所以这里保留原色、不设 isTemplate。
 ///
 /// 图片直接内嵌 base64：菜单栏图标必须随 App 一起分发，内嵌就不依赖打包脚本
 /// 有没有拷到资源目录（这个项目已经被打包漏文件坑过一次）。
 enum StatusIconAsset {
     static let image: NSImage = {
         // 逻辑尺寸统一给 16pt：16px 那张是 1x、32px 那张是 2x（NSImage 按
-        // 「像素宽 ÷ 逻辑宽」推断倍率）。之前把 32px 那张的逻辑尺寸也设成 32pt，
-        // 倍率会被当成 1，Retina 下就会取错图。
+        // 「像素宽 ÷ 逻辑宽」推断倍率）。32px 那张若也写 32pt，倍率会被当成
+        // 1，Retina 下就取错图。
         let image = NSImage(size: NSSize(width: 16, height: 16))
-        for base64 in [template1x, template2x] {
+        for base64 in [plate1x, plate2x] {
             guard let data = Data(
                 base64Encoded: base64,
                 options: .ignoreUnknownCharacters
@@ -185,29 +188,38 @@ enum StatusIconAsset {
             rep.size = NSSize(width: 16, height: 16)
             image.addRepresentation(rep)
         }
-        image.isTemplate = true
         return image
     }()
 
-    private static let template1x = """
-    iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAA
-    xUlEQVQ4jZ2RwQnCQBREXwziTcGDdpBTMFiCFShoVYIFiBWINuFJDHiwAsESgiAIGlkYYQlLdpMP
-    j/kMf4aFBfdE0p6wvaCJpAdg36agD4yBHDgDI2AQEoyla+BhFdyBTeWmtmALPIErcAEKYBdSEEkn
-    wAyYApn2rHLjLUmAuUhCwx1pqmeXopBn3zgnli4VvIlSnn1TW7BSKBWlvMYFR9G64CNaF7xF44KF
-    Ql9hduN5C/7/PAROwEuY3Xj2jXe6ChnM7pwfV4Iv0IkE+a8AAAAASUVORK5CYII=
+    private static let plate1x = """
+    iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAB
+    YklEQVQ4jaVTsU7DMBC9z+APoOJnEIihC11ZQBUD8BeoQkVqFwYKEgN/gMTEAupQMbAQBgp24gaa
+    JalDiQ+dHVdO64qBJ7344rt3OV3uAABgMHheDYK3G8ZGaRR9YhjGmowb2nfyMSZSiiUNaaHff6ox
+    Fn+ggcK/oWNIQ1oYDqPr0pErZfTlgQ9BgY+vReWujMnpQVoQIkkch8aP0eD+hcTmpazcubFCjBMI
+    w3imtDmSDLF+JnHjZIKbLYn1tsRxWq2OQFrgfISLCRQ2OhKbPYkHVzk2uv4EpAXqrg9U8leqNN3y
+    XZAW5hMU5Rfat1OsHWWaZLu+pQmU49xqSdzpGJLti/FWYLF9KrF3P9Uk2wedgDtNdEGNWzvMNMn2
+    wTZR2QvlnFT6+nGmSbbrcypQC4NkA3bPc1zZSzXJrnzAHaT5Ubb/+SVS2L371iTbCD2j/O9lqq6z
+    mK0z5zG+M0Oyl63zL4Oupyq3DRNdAAAAAElFTkSuQmCC
     """
 
-    private static let template2x = """
-    iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsTAAALEwEAmpwYAAAB
-    xUlEQVRYhd2XzytEURTHP2/elI2dyMKC/AFKKQp/wWTByr/gP7AeCREKZSzV/A1SNiwo2aEUK2Vr
-    oamZwXsafV+dbsav7rvKqdM579xzOp95957pPvi9RG38oNIpDSoF2RHgAbgHhp21XJt3yF8BUumi
-    Yh15QkTSWM9rBmBZsaLJ8968Jf3AzLsHqwZgSbFpYEC+N4hItgu4UcMt/eoMYAFYl38L9PiEKMiO
-    Aq9qcgFsG4AN4Ex+Aow7tV4AxoCmmpwDOwZgEziV/wxMqCb2CTAENNTkWPueAZSBI/nNPMeyDFwB
-    U0AvcAgcAN1ACbg0I5mbFMyoFT54zlXiL062/Z/wLpFsn7aiCuxLq4r1Obnem/cC1zps2Uha/1o5
-    3iGKsvNqVNdprzt+qhxb40Vi2V0z64l5A4liqXJsjVeAimn4qH0vy8+AKiEAUmDOrM+ZeDCAklkv
-    hQLYM41OgEHpiYnvhQB4NtNQd2LBAJI2UxD0DSQG5E8AUqNBACrfAKj8S4CicxVvmP3PNLstrTk1
-    XiSWnQRezAG0U5BqbdKp8SaR7CxwB9SAJ2lNsVkn17tEsq1PsNbd32r2yZb7l/Jn974f3wnfAOB8
-    vGMgKCDBAAAAAElFTkSuQmCC
+    private static let plate2x = """
+    iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsTAAALEwEAmpwYAAAD
+    T0lEQVRYhcVXXUsUYRSejP5BV1FgBhVJaRkEdVsgRD+hj4voIujLQM3ciMyyIrutqIugyD6Eypvu
+    o6IQKnO/ZhndtaAoFtTdeefLmSeed2ZoI21nt8YOHDye8+55nnk/z1EURVEALAHQQDuXKzSn0xOD
+    qZQ2nslMWtlsHn+jzJFOT4wnk9o15g7wGohJOwRfMjqKZanUxHlVnbJmZgTKZcMrlwV03fgrZQ7m
+    mp4WyOWmLGIQK8RVAhJL0+nJoWKxBF035wA4ADz8O2Euh7mJQSxiSnCKqub7i8UyTNO2Q2CvCjzj
+    HOJFHBuapmnZJJHJ5PsluKZ92qRpn/VSSffH1vDdjutrVAlye8QiJrEVVZ26yvUJpj1qEswaHvbd
+    MHHgpomyGWSOTt4hJrGVbDY/VioZdLpREswFX/xGc7G2U2Bdp8DopPtLLMIHuMQktpLNFgzu1Kgi
+    bDKFBG05LdDaK/Au70qfwR0UUYhJbM4Aj0mkH5H8odsW2i8buP/aQVtCoO2MwOO3DtqvGDh4y5JE
+    ohGQMwAlk6lOIFyab7OeBFzfJdD90ML2cwI7+gQSw5b0bU4IfJmOth+ISeyaCHyf9bAl4a971wNL
+    AvL/3mFL+jb3CnyNg0ClnLhnYfdVA+8LLvZeN7H/homPn1zsGTRw7K6FqFI3AWcOMIMDy/UO15w+
+    xmIl4IU3oOfvB643lXboj42AF/zVLQ+dQxa2nhHYdtZX2vQxVjn2nxKYCy6ZOy8crDiiy/O/scdX
+    2vQxVjk2FgJ9T2ysOamjpUdgU6C06WMsNgJukPTiiI1Vx3XsumzgVc6VSps+xirHxkJgYMTG8sO6
+    vHxCoU3fwGIQuPAsmIFLBl6qrlTa9DEWO4H+pzaaOnS59uEmpE0fY4tCoLFDl0ePryGVduNiEljd
+    ocs3oJXP8Wn/PVhdL4FstvY9EBIIZyAkUOsekM9x1IKk8h5oOukvAS8gKu2mmu+BnwXJWJSSLEz6
+    6K2DlUcFmk8JbOj2lTZ9jFUjUFmSqWrhQ81FKZNfe27Lo7dzwFfa9EX58t+KUq3Ostxy/BqQSrvu
+    spzCJoHNApuGao0J/fPVffT96TcLNib/vTXDPM0p1yeO5pS5F2pOY23Pk0ktuVB7/gPUrKetivtD
+    nQAAAABJRU5ErkJggg==
     """
 }
 

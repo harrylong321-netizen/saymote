@@ -112,15 +112,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(makeLogMenu())
         menu.addItem(makeLanguageMenu())
 
-        menu.addItem(.separator())
-        let updates = NSMenuItem(
-            title: L10n.text("版本与更新…", "Version & Updates…"),
-            action: #selector(openVersionUpdates),
-            keyEquivalent: ""
-        )
-        updates.target = self
-        menu.addItem(updates)
-
+        // 「版本与更新」暂时屏蔽（用户要求，2026-09-22）：菜单入口和启动时的
+        // 自动检查都关掉。UpdateSupport.swift 的实现与 `openVersionUpdates`
+        // 都留着，恢复时把这段菜单项放回来即可。
         menu.addItem(.separator())
         let quit = NSMenuItem(
             title: L10n.text("退出", "Quit"),
@@ -306,11 +300,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.updateWindow.show()
             }
-        } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
-                self?.updateWindow.checkAutomatically()
-            }
         }
+        // 原本这里还有一段「启动 8 秒后自动检查更新」的 else 分支，随
+        // 「版本与更新」一起屏蔽。恢复时重新加回来。
     }
 
     func menuWillOpen(_ menu: NSMenu) {
