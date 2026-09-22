@@ -2,7 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="${0:A:h}"
-APP="$SCRIPT_DIR/dist/build/vRemote.app"
+# 产物目录名和对外显示的产品名保持一致（遥控说）。系统是按「bundle id」
+# 认应用的，磁盘上如果同时存在同 id、不同文件名（vRemote.app）的副本，
+# 权限列表/访达可能挑中旧名字那份，显示成「vRemote」。
+APP="$SCRIPT_DIR/dist/build/遥控说.app"
 CONTENTS="$APP/Contents"
 
 cd "$SCRIPT_DIR"
