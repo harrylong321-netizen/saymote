@@ -677,38 +677,45 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
 private struct StudioMixerView: View {
     @ObservedObject var model: ConsoleViewModel
 
+    /// 底部 slogan：两个页面共用同一段，位置才可能完全一致。
+    /// 用固定高度的 Spacer（不是可伸缩的），免得两页内容高度差几点时
+    /// slogan 跟着飘。
+    private var sloganFooter: some View {
+        VStack(spacing: 0) {
+            Spacer().frame(height: 6)
+            Text("Saymote, say more")
+                .font(.system(size: 12, weight: .medium))
+                .tracking(0.6)
+                .foregroundStyle(ConsoleTheme.tertiary)
+            Spacer().frame(height: 6)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
-                .frame(height: 68)
+                .frame(height: 74)
             if model.selectedPage == .mixer {
                 // 两个模块都按内容高度排、行距固定（行间那点空档不摊开），
                 // 剩下的零头留在页面底部，不掺进行距里。
-                Spacer().frame(height: 16)
+                Spacer().frame(height: 14)
                 ConsoleSectionHeader(title: L10n.text("状态", "Status"))
                 Spacer().frame(height: 8)
                 mixer
                     .frame(height: 185)
-                Spacer().frame(height: 20)
+                Spacer().frame(height: 16)
                 ConsoleSectionHeader(title: L10n.text("设置", "Settings"))
                 Spacer().frame(height: 8)
                 settingsPanel
-                // 底部留白里居中放 slogan（产品名 + 一句话）。
-                // 用 Group 包起来：ViewBuilder 一层最多 10 个子视图，直接加会超。
-                Group {
-                    Spacer(minLength: 10)
-                    Text("Saymote, say more")
-                        .font(.system(size: 12, weight: .medium))
-                        .tracking(0.6)
-                        .foregroundStyle(ConsoleTheme.tertiary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    Spacer(minLength: 10)
-                }
+                sloganFooter
             } else {
-                Spacer().frame(height: 15)
+                // 顶部间距与「基础配置」页一致（14），高度取到与那边面板
+                // 底边齐平的位置（见 sloganFooter 注释里的算法）。
+                Spacer().frame(height: 14)
                 KeyMappingView(model: model)
-                    .frame(height: 512)
-                Spacer(minLength: 0)
+                    .frame(height: 502)
+                sloganFooter
             }
         }
         .padding(20)
@@ -1051,7 +1058,7 @@ private struct KeyMappingView: View {
     var body: some View {
         VStack(spacing: 12) {
             triggerPanel
-                .frame(height: 100)
+                .frame(height: 118)
             mappingCard
         }
     }
