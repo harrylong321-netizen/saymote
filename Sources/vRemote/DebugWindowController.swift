@@ -370,7 +370,13 @@ private final class ConsoleViewModel: ObservableObject {
             return
         }
         accessibilityGranted = AXIsProcessTrusted()
-        inputMonitoringGranted = CGPreflightListenEventAccess()
+        // 用 IOHID 这对 API，而不是 CGPreflight/CGRequestListenEventAccess：
+        // 在 macOS 上「辅助功能」授权会让 CGPreflightListenEventAccess 也返回
+        // true（实测：勾了辅助功能后，输入监控那一行跟着变成「已授权」，
+        // 但实际没授权、功能也不可用）。IOHIDCheckAccess 反映的才是真正的
+        // 输入监控授权状态，也和本 App 实际用的 IOHIDManager 对得上。
+        inputMonitoringGranted =
+            IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
         if #available(macOS 11.0, *) {
             bluetoothGranted = CBManager.authorization == .allowedAlways
         } else {
@@ -415,7 +421,9 @@ private final class ConsoleViewModel: ObservableObject {
         switch kind {
         case .inputMonitoring:
             // 会弹系统提示，并把 App 登记进「输入监听」列表。
-            _ = CGRequestListenEventAccess()
+            // 用 IOHID 的请求接口，与上面的检测、以及 App 实际用的
+            // IOHIDManager 保持同一套权限语义。
+            _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
         case .accessibility:
             // 带 prompt 的查询同样会登记进「辅助功能」列表。
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
@@ -2179,6 +2187,26 @@ private struct PermissionGuideView: View {
     }
 }
 
+/// 把整块区域压暗，但 `box` 处留一个透明的「洞」。
+/// 用 even-odd 填充实现：外框实心、内框挖空。
+private struct DimmingMask: View {
+    let box: CGRect
+    let cornerRadius: CGFloat
+    let container: CGSize
+
+    var body: some View {
+        Path { path in
+            path.addRect(CGRect(origin: .zero, size: container))
+            path.addRoundedRect(
+                in: box,
+                cornerSize: CGSize(width: cornerRadius, height: cornerRadius)
+            )
+        }
+        .fill(Color.black.opacity(0.55), style: FillStyle(eoFill: true))
+        .allowsHitTesting(false)
+    }
+}
+
 private struct GuideScreenshot: View {
     let kind: PermissionKind
     @Binding var page: Int
@@ -2187,25 +2215,36 @@ private struct GuideScreenshot: View {
         GeometryReader { proxy in
             ZStack {
                 if let image = GuideAsset.image(named: kind.screenshotName(for: page)) {
+                    // 归一化坐标要映射到「scaledToFit 之后图片真正占据的矩形」，
+                    // 不能直接用整个图框：图片有留白时高亮框会整体偏掉。
+                    let fitted = Self.fittedRect(for: image.size, in: proxy.size)
                     Image(nsImage: image)
                         .resizable()
                         .scaledToFit()
                         .frame(width: proxy.size.width, height: proxy.size.height)
+
+                    if kind != .doubaoInput || page == 0 {
+                        let rect = highlightRect
+                        let box = CGRect(
+                            x: fitted.minX + fitted.width * (rect.x - rect.width / 2),
+                            y: fitted.minY + fitted.height * (rect.y - rect.height / 2),
+                            width: fitted.width * rect.width,
+                            height: fitted.height * rect.height
+                        )
+                        // 除目标区域外整体压暗（目标处留一个洞），视线自然被
+                        // 拉过去；红框再叠在洞口边缘强化一下。
+                        DimmingMask(
+                            box: box,
+                            cornerRadius: 10,
+                            container: proxy.size
+                        )
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(ConsoleTheme.red, lineWidth: 3)
+                            .frame(width: box.width, height: box.height)
+                            .position(x: box.midX, y: box.midY)
+                    }
                 } else {
                     screenshotPlaceholder
-                }
-
-                if kind != .doubaoInput || page == 0 {
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(ConsoleTheme.red, lineWidth: 3)
-                        .frame(
-                            width: proxy.size.width * highlightWidth,
-                            height: proxy.size.height * highlightHeight
-                        )
-                        .position(
-                            x: proxy.size.width * highlightX,
-                            y: proxy.size.height * highlightY
-                        )
                 }
 
                 HStack {
@@ -2263,29 +2302,47 @@ private struct GuideScreenshot: View {
         .foregroundStyle(ConsoleTheme.text)
     }
 
-    private var secondPageY: CGFloat {
-        switch kind {
-        case .doubaoInput: 0.5
-        case .accessibility: 0.89
-        case .inputMonitoring: 0.46
-        case .bluetooth: 0.74
+
+    /// 引导图上的重点区域（归一化：x/y 是中心点，width/height 是占比）。
+    /// 红框和压暗遮罩都用它。换截图时只要按新截图量一下改这里的数字即可
+    /// （截图统一是系统「安全性与隐私」整窗截图 1336×1174）。
+    private var highlightRect: (x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) {
+        switch (kind, page) {
+        case (.doubaoInput, _):
+            return (0.60, 0.40, 0.36, 0.11)
+        case (.bluetooth, 0):
+            return (0.22, 0.470, 0.32, 0.055)   // 侧栏「蓝牙」
+        case (.bluetooth, _):
+            return (0.68, 0.466, 0.47, 0.062)   // 列表里的「遥控说」行
+        case (.accessibility, 0):
+            return (0.22, 0.495, 0.32, 0.055)   // 侧栏「辅助功能」
+        case (.accessibility, _):
+            return (0.68, 0.330, 0.47, 0.062)   // 列表里的「遥控说」行
+        case (.inputMonitoring, 0):
+            return (0.22, 0.495, 0.32, 0.055)   // 侧栏「输入监听」
+        case (.inputMonitoring, _):
+            // 输入监听列表默认没有本 App，第二步要引导点「+」把它加进来，
+            // 所以这里框的是加号按钮，而不是某一行。
+            return (0.455, 0.670, 0.10, 0.048)
+        default:
+            return (0.68, 0.47, 0.47, 0.062)
         }
     }
 
-    private var highlightWidth: CGFloat {
-        kind == .doubaoInput ? 0.36 : (page == 0 ? 0.38 : 0.45)
-    }
-
-    private var highlightHeight: CGFloat {
-        kind == .doubaoInput ? 0.11 : 0.10
-    }
-
-    private var highlightX: CGFloat {
-        kind == .doubaoInput ? 0.60 : (page == 0 ? 0.255 : 0.62)
-    }
-
-    private var highlightY: CGFloat {
-        kind == .doubaoInput ? 0.40 : (page == 0 ? 0.25 : secondPageY)
+    /// `scaledToFit` 之后图片在图框里实际占据的矩形（居中留白）。
+    private static func fittedRect(for imageSize: CGSize, in size: CGSize) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0 else {
+            return CGRect(origin: .zero, size: size)
+        }
+        let scale = min(size.width / imageSize.width, size.height / imageSize.height)
+        let width = imageSize.width * scale
+        let height = imageSize.height * scale
+        return CGRect(
+            x: (size.width - width) / 2,
+            y: (size.height - height) / 2,
+            width: width,
+            height: height
+        )
     }
 
     private func guideArrow(
