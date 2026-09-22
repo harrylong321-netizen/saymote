@@ -10,14 +10,13 @@ import Foundation
 /// 键码写死，不做任何推断。
 ///
 /// 只保留 Command / Option / Control：Shift 与 Fn 在豆包里会与输入法自身的
-/// 快捷键冲突，实测无用。
+/// 快捷键冲突，实测无用；Control 也不给「右」——MacBook 键盘压根没有右 ⌃。
 enum InputTriggerKey: String, CaseIterable, Identifiable {
     case leftCommand
     case rightCommand
     case leftOption
     case rightOption
     case leftControl
-    case rightControl
 
     var id: String { rawValue }
 
@@ -28,7 +27,6 @@ enum InputTriggerKey: String, CaseIterable, Identifiable {
         case .leftOption: L10n.text("左 Option (⌥)", "Left Option (⌥)")
         case .rightOption: L10n.text("右 Option (⌥)", "Right Option (⌥)")
         case .leftControl: L10n.text("左 Control (⌃)", "Left Control (⌃)")
-        case .rightControl: L10n.text("右 Control (⌃)", "Right Control (⌃)")
         }
     }
 
@@ -40,7 +38,6 @@ enum InputTriggerKey: String, CaseIterable, Identifiable {
         case .leftOption: [0x3A]
         case .rightOption: [0x3D]
         case .leftControl: [0x3B]
-        case .rightControl: [0x3E]
         }
     }
 
@@ -52,7 +49,7 @@ enum InputTriggerKey: String, CaseIterable, Identifiable {
         switch self {
         case .leftCommand, .rightCommand: .maskCommand
         case .leftOption, .rightOption: .maskAlternate
-        case .leftControl, .rightControl: .maskControl
+        case .leftControl: .maskControl
         }
     }
 
@@ -63,7 +60,7 @@ enum InputTriggerKey: String, CaseIterable, Identifiable {
         switch raw {
         case "command": return .rightCommand
         case "option": return .leftOption
-        case "control": return .leftControl
+        case "control", "rightControl": return .leftControl   // 右 ⌃ 已去掉（MacBook 没有右 ⌃）
         default: return nil
         }
     }

@@ -315,6 +315,11 @@ private final class ConsoleViewModel: ObservableObject {
     @Published var chromecastConnected = false
     @Published var inputTriggerKey = AppStorage.inputTriggerKey
     @Published var activeModal: ConsoleModal?
+    /// 豆包最近一次用的是「非虚拟声卡」的输入设备。这个状态本身只在豆包
+    /// 录音那一瞬间成立（松手就没了），但用户需要时间去照着改设置，所以
+    /// 记下来、一直提示到豆包重新用上虚拟声卡为止。
+    @Published var doubaoWrongDeviceNotice: String?
+
     @Published var showX6MicHint = !UserDefaults.standard.bool(
         forKey: "vRemoter.hasCompletedX6MicTest"
     )
@@ -452,10 +457,16 @@ private final class ConsoleViewModel: ObservableObject {
         }
     }
 
+    /// 打开豆包输入法的设置页；**没装豆包输入法就打开官方下载页**，
+    /// 不让按钮点了没反应（用户反馈过「不知道点完弹出什么」）。
     private func openDoubaoSettings() {
-        let bundleIdentifier = "com.bytedance.inputmethod.doubaoime.settings"
         let candidates = [
-            NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier),
+            NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: "com.bytedance.inputmethod.doubaoime.settings"
+            ),
+            NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: "com.bytedance.inputmethod.doubaoime"
+            ),
             URL(
                 fileURLWithPath:
                     "/Library/Input Methods/DoubaoIme.app/Contents/DoubaoImeSettings.app"
@@ -463,7 +474,26 @@ private final class ConsoleViewModel: ObservableObject {
         ]
         for candidate in candidates.compactMap({ $0 })
             where FileManager.default.fileExists(atPath: candidate.path) {
-            if NSWorkspace.shared.open(candidate) { return }
+            if NSWorkspace.shared.open(candidate) {
+                ToastPresenter.shared.show(
+                    L10n.text(
+                        "已打开豆包设置：请在「语音输入」里把麦克风选成「虚拟声卡」。",
+                        "Doubao settings opened: pick the Virtual sound card as its microphone."
+                    ),
+                    symbolName: "mic.fill"
+                )
+                return
+            }
+        }
+        if let url = URL(string: "https://ime.doubao.com") {
+            NSWorkspace.shared.open(url)
+            ToastPresenter.shared.show(
+                L10n.text(
+                    "没有检测到豆包输入法，已打开官方下载页；装好后再回来点这里。",
+                    "Doubao Input Method not found — opened the download page."
+                ),
+                symbolName: "arrow.down.circle.fill"
+            )
         }
     }
 
@@ -589,6 +619,11 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
             self.model.routeActive = routeActive
             self.model.doubaoIsRecording = doubaoIsRecording
             self.model.doubaoInput = doubaoInput
+            if doubaoIsRecording {
+                // 用上虚拟声卡就清掉提示；用了别的设备就记下来（见字段注释）。
+                self.model.doubaoWrongDeviceNotice =
+                    doubaoInput.contains("vRemoteDr 2ch") ? nil : doubaoInput
+            }
             self.model.driverAvailable = driverAvailable
             self.model.x6Connected = x6Connected
             self.model.chromecastConnected = chromecastConnected
@@ -838,21 +873,23 @@ private struct StudioMixerView: View {
         .background(panelBackground(ConsoleTheme.surface, radius: 19))
     }
 
-    /// 输入监控那一行显示的文案。
-    ///
-    /// 关键事实：macOS 里「辅助功能」会**连带**让输入监控的查询接口返回 true
-    /// （实测：辅助功能一开，CGPreflightListenEventAccess 和 IOHIDCheckAccess
-    /// 都说 granted），而且此时系统认为输入监听已被涵盖——既不再提示，也不会
-    /// 把 App 列进「输入监听」列表。所以辅助功能开着时这一行显示「已授权」
-    /// 是符合系统语义的，不是误报。这里把来源写明，免得用户以为漏配了一项。
-    private var inputMonitoringValue: String {
-        guard model.inputMonitoringGranted else {
-            return L10n.text("无法监听遥控器语音键", "Cannot monitor remote voice key")
+    /// 「豆包输入设备」那一行：优先显示最近一次「用错设备」的提醒（常驻，
+    /// 不随松手消失），没有问题时显示当前状态。
+    private var doubaoInputDeviceValue: String {
+        if let wrong = model.doubaoWrongDeviceNotice {
+            return L10n.text("正在使用「\(wrong)」", "Using \(wrong)")
         }
-        return model.accessibilityGranted
-            ? L10n.text("已授权（由辅助功能涵盖）",
-                        "Granted (covered by Accessibility)")
-            : L10n.text("已授权", "Granted")
+        guard model.doubaoIsRecording else {
+            return L10n.text("当前未录音", "Not recording")
+        }
+        return model.doubaoUsesVRemote
+            ? L10n.text("虚拟声卡 · 录音中", "Virtual sound card · Recording")
+            : model.doubaoInput
+    }
+
+    private var doubaoInputDeviceNeedsAttention: Bool {
+        model.doubaoWrongDeviceNotice != nil
+            || (model.doubaoIsRecording && !model.doubaoUsesVRemote)
     }
 
     /// 状态 / 权限五行（只读，出问题给修复入口）。单独抽一层，
@@ -862,14 +899,9 @@ private struct StudioMixerView: View {
         VStack(spacing: 6) {
             StatusRow(
                 title: L10n.text("豆包输入设备", "Doubao input"),
-                value: model.doubaoIsRecording
-                    ? (model.doubaoUsesVRemote
-                        ? L10n.text("虚拟声卡 · 录音中",
-                                    "Virtual sound card · Recording")
-                        : model.doubaoInput)
-                    : L10n.text("当前未录音", "Not recording"),
-                tone: model.doubaoIsRecording && !model.doubaoUsesVRemote ? .error : .good,
-                action: model.doubaoIsRecording && !model.doubaoUsesVRemote
+                value: doubaoInputDeviceValue,
+                tone: doubaoInputDeviceNeedsAttention ? .error : .good,
+                action: doubaoInputDeviceNeedsAttention
                     ? L10n.text("设置方法", "Fix settings")
                     : nil,
                 onAction: { model.activeModal = .permission(.doubaoInput) }
@@ -901,13 +933,6 @@ private struct StudioMixerView: View {
                 tone: model.accessibilityGranted ? .good : .error,
                 action: model.accessibilityGranted ? nil : L10n.text("去授权", "Grant"),
                 onAction: { model.activeModal = .permission(.accessibility) }
-            )
-            StatusRow(
-                title: L10n.text("输入监控权限", "Input Monitoring"),
-                value: inputMonitoringValue,
-                tone: model.inputMonitoringGranted ? .good : .warning,
-                action: model.inputMonitoringGranted ? nil : L10n.text("去授权", "Grant"),
-                onAction: { model.activeModal = .permission(.inputMonitoring) }
             )
         }
     }
