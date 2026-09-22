@@ -280,6 +280,45 @@ struct RemoteAppMapping: Codable, Hashable {
     }
 }
 
+/// 「打开指定 App」映射用的图标缓存。
+///
+/// 按 bundle id 缓存（应用挪位置也能复用）；取不到就记一笔「没有」，
+/// 免得每帧都去问一次文件系统。应用被删/移动时返回 nil，调用方回落到
+/// 原来的通用符号，不会出现空白。
+enum AppIconCache {
+    private static var icons: [String: NSImage] = [:]
+    private static var missing: Set<String> = []
+
+    static func icon(for mapping: RemoteAppMapping?) -> NSImage? {
+        guard let mapping else { return nil }
+        let key = mapping.bundleID.isEmpty ? mapping.path : mapping.bundleID
+        if let hit = icons[key] { return hit }
+        if missing.contains(key) { return nil }
+
+        // bundle id 优先（应用挪位置也能找到），路径兜底。
+        var candidate: URL?
+        if !mapping.bundleID.isEmpty {
+            candidate = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: mapping.bundleID
+            )
+        }
+        if candidate == nil, FileManager.default.fileExists(atPath: mapping.path) {
+            candidate = URL(fileURLWithPath: mapping.path)
+        }
+        // 只有真的存在才取图标——对不存在的路径，NSWorkspace 会返回通用图标，
+        // 那还不如回落到我们自己的符号。
+        guard let url = candidate,
+              FileManager.default.fileExists(atPath: url.path) else {
+            missing.insert(key)
+            return nil
+        }
+        let image = NSWorkspace.shared.icon(forFile: url.path)
+        image.size = NSSize(width: 17, height: 17)
+        icons[key] = image
+        return image
+    }
+}
+
 final class RemoteMappingStore: ObservableObject {
     static let shared = RemoteMappingStore()
 

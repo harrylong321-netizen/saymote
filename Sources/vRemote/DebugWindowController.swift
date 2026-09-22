@@ -1608,11 +1608,23 @@ private struct MappingRow: View {
                     help: L10n.text("重新录制按键", "Record again")
                 ) { showRecorder = true }
             } else if button.remappable, !button.voiceControlled, currentTarget == .openApp {
-                secondaryActionButton(
-                    symbol: "app.badge",
-                    help: L10n.text("重新选择应用", "Choose another app"),
-                    action: chooseApp
-                )
+                // 映射到 App 时直接显示该 App 的图标（取不到才回落到通用符号）。
+                let helpText = L10n.text("重新选择应用", "Choose another app")
+                if let appIcon = AppIconCache.icon(
+                    for: mappings.appMapping(for: button, remote: remote)
+                ) {
+                    secondaryActionButton(
+                        image: appIcon,
+                        help: helpText,
+                        action: chooseApp
+                    )
+                } else {
+                    secondaryActionButton(
+                        symbol: "app.badge",
+                        help: helpText,
+                        action: chooseApp
+                    )
+                }
             }
         }
         .padding(.horizontal, 10)
@@ -1721,9 +1733,33 @@ private struct MappingRow: View {
         help: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        secondaryActionButton(help: help, action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 11))
+        }
+    }
+
+    /// 图标版：映射到 App 时显示该 App 的真实图标（彩色，不加 tint）。
+    private func secondaryActionButton(
+        image: NSImage,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        secondaryActionButton(help: help, action: action) {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 17, height: 17)
+        }
+    }
+
+    private func secondaryActionButton<Content: View>(
+        help: String,
+        action: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        Button(action: action) {
+            content()
                 .frame(width: 18, height: 18)
                 .contentShape(Rectangle())
         }
