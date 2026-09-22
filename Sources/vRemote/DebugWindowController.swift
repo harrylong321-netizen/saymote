@@ -169,6 +169,46 @@ enum LogoAsset {
     }()
 }
 
+/// 豆包输入法的入口：装了就把设置页打开，没装就给官方下载页。
+///
+/// 单独抽出来是为了可测：`--demo-doubao-missing` 就是直接跑这里的下载分支，
+/// 用来演示「用户没装豆包」时 App 会怎么引导（系统目录有 SIP 保护，
+/// 没法真把豆包删掉来测）。
+enum DoubaoLauncher {
+    static let downloadPage = URL(string: "https://ime.doubao.com")!
+
+    private static var settingsCandidates: [URL] {
+        [
+            NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: "com.bytedance.inputmethod.doubaoime.settings"
+            ),
+            NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: "com.bytedance.inputmethod.doubaoime"
+            ),
+            URL(
+                fileURLWithPath:
+                    "/Library/Input Methods/DoubaoIme.app/Contents/DoubaoImeSettings.app"
+            )
+        ].compactMap { $0 }
+    }
+
+    /// true = 已安装并打开了设置页；false = 没装，已打开下载页。
+    @discardableResult
+    static func openSettingsOrDownloadPage() -> Bool {
+        for candidate in settingsCandidates
+            where FileManager.default.fileExists(atPath: candidate.path) {
+            if NSWorkspace.shared.open(candidate) { return true }
+        }
+        NSWorkspace.shared.open(downloadPage)
+        return false
+    }
+
+    /// 演示「没装豆包」时的引导效果（不做任何检测，直接走下载分支）。
+    static func demoMissing() {
+        NSWorkspace.shared.open(downloadPage)
+    }
+}
+
 /// 菜单栏图标。用品牌素材里的「plate」版：圆角方框 + 里面的遥控器，
 /// 整体是个正方形（用户要求「外面加个框，像正方形一样」）。
 ///
@@ -280,7 +320,7 @@ private enum ConsolePage: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .mixer: L10n.text("系统设置", "System Settings")
+        case .mixer: L10n.text("基础配置", "Basic Setup")
         case .mapping: L10n.text("按键映射", "Key Mapping")
         }
     }
@@ -457,36 +497,18 @@ private final class ConsoleViewModel: ObservableObject {
         }
     }
 
-    /// 打开豆包输入法的设置页；**没装豆包输入法就打开官方下载页**，
-    /// 不让按钮点了没反应（用户反馈过「不知道点完弹出什么」）。
+    /// 打开豆包输入法的设置页；没装就打开官方下载页（逻辑见 `DoubaoLauncher`）。
     private func openDoubaoSettings() {
-        let candidates = [
-            NSWorkspace.shared.urlForApplication(
-                withBundleIdentifier: "com.bytedance.inputmethod.doubaoime.settings"
-            ),
-            NSWorkspace.shared.urlForApplication(
-                withBundleIdentifier: "com.bytedance.inputmethod.doubaoime"
-            ),
-            URL(
-                fileURLWithPath:
-                    "/Library/Input Methods/DoubaoIme.app/Contents/DoubaoImeSettings.app"
+        if DoubaoLauncher.openSettingsOrDownloadPage() {
+            // 豆包设置页不会直接停在语音输入那一页，这里再交代一句要点哪里。
+            ToastPresenter.shared.show(
+                L10n.text(
+                    "已打开豆包设置：请在「语音输入」里把麦克风选成「虚拟声卡」。",
+                    "Doubao settings opened: pick the Virtual sound card as its microphone."
+                ),
+                symbolName: "mic.fill"
             )
-        ]
-        for candidate in candidates.compactMap({ $0 })
-            where FileManager.default.fileExists(atPath: candidate.path) {
-            if NSWorkspace.shared.open(candidate) {
-                ToastPresenter.shared.show(
-                    L10n.text(
-                        "已打开豆包设置：请在「语音输入」里把麦克风选成「虚拟声卡」。",
-                        "Doubao settings opened: pick the Virtual sound card as its microphone."
-                    ),
-                    symbolName: "mic.fill"
-                )
-                return
-            }
-        }
-        if let url = URL(string: "https://ime.doubao.com") {
-            NSWorkspace.shared.open(url)
+        } else {
             ToastPresenter.shared.show(
                 L10n.text(
                     "没有检测到豆包输入法，已打开官方下载页；装好后再回来点这里。",
@@ -663,15 +685,25 @@ private struct StudioMixerView: View {
                 // 两个模块都按内容高度排、行距固定（行间那点空档不摊开），
                 // 剩下的零头留在页面底部，不掺进行距里。
                 Spacer().frame(height: 16)
-                ConsoleSectionHeader(title: L10n.text("系统状态", "System Status"))
+                ConsoleSectionHeader(title: L10n.text("状态", "Status"))
                 Spacer().frame(height: 8)
                 mixer
                     .frame(height: 185)
                 Spacer().frame(height: 20)
-                ConsoleSectionHeader(title: L10n.text("系统设置", "System Settings"))
+                ConsoleSectionHeader(title: L10n.text("设置", "Settings"))
                 Spacer().frame(height: 8)
                 settingsPanel
-                Spacer(minLength: 0)
+                // 底部留白里居中放 slogan（产品名 + 一句话）。
+                // 用 Group 包起来：ViewBuilder 一层最多 10 个子视图，直接加会超。
+                Group {
+                    Spacer(minLength: 10)
+                    Text("Saymote, say more")
+                        .font(.system(size: 12, weight: .medium))
+                        .tracking(0.6)
+                        .foregroundStyle(ConsoleTheme.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    Spacer(minLength: 10)
+                }
             } else {
                 Spacer().frame(height: 15)
                 KeyMappingView(model: model)

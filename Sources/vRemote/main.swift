@@ -108,6 +108,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if CommandLine.arguments.contains("--demo-doubao-missing") {
+            // 演示「没装豆包输入法」时的引导：直接打开官方下载页。
+            // 系统目录 /Library/Input Methods 有 SIP 保护，删不掉真身来测，
+            // 所以留这个入口给用户看效果。
+            DoubaoLauncher.demoMissing()
+            print("[DEMO] 已按「未安装豆包输入法」的路径打开下载页")
+            exit(0)
+        }
         if CommandLine.arguments.contains("--permission-probe") {
             printPermissionProbe()
             exit(0)
@@ -437,10 +445,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func warnDoubaoWrongInputDevice(actual: String) {
         guard !warnedDoubaoInputDevice else { return }
         warnedDoubaoInputDevice = true
+        print("[APP] 豆包在用「\(actual)」，提示用户切换输入设备")
+        // 提示只留「要做什么」这一句：前半句「豆包正在用内置麦克风」用户看到
+        // 提示时本来就知道（控制台那行也写着），句子太长反而看不清重点。
         ToastPresenter.shared.show(
             L10n.text(
-                "豆包正在用「\(actual)」，收不到遥控器的声音。请在豆包语音输入里把麦克风切成「虚拟声卡」。",
-                "Doubao is using \(actual) and cannot hear the remote. Switch its microphone to the Virtual sound card."
+                "请在豆包语音输入里，将麦克风切成「虚拟声卡」（vRemoteDr 2ch）",
+                "In Doubao, set the microphone to “Virtual sound card” (vRemoteDr 2ch)"
             ),
             symbolName: "mic.slash.fill"
         )
