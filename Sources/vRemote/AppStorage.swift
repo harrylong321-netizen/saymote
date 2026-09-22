@@ -19,8 +19,9 @@ enum AppStorage {
     static func prepare() {
         UserDefaults.standard.register(defaults: [
             loggingEnabledKey: false,
-            inputTriggerKeyKey: InputTriggerKey.option.rawValue,
+            inputTriggerKeyKey: InputTriggerKey.leftOption.rawValue,
         ])
+        migrateTriggerKeyIfNeeded()
         ensureDirectory(logsDirectory)
         ensureDirectory(applicationSupportDirectory)
 
@@ -33,10 +34,22 @@ enum AppStorage {
     }
 
 
+    /// 老版本存的是不分左右的 option / command / control，升级后要映射到
+    /// 对应的「侧」——按旧版实际发送的键迁移，行为保持不变。只做一次。
+    private static func migrateTriggerKeyIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard let raw = defaults.string(forKey: inputTriggerKeyKey),
+              let migrated = InputTriggerKey.migrated(fromLegacy: raw)
+        else { return }
+        defaults.set(migrated.rawValue, forKey: inputTriggerKeyKey)
+    }
+
     static var inputTriggerKey: InputTriggerKey {
         get {
             let raw = UserDefaults.standard.string(forKey: inputTriggerKeyKey)
-            return InputTriggerKey(rawValue: raw ?? "") ?? .option
+            return InputTriggerKey(rawValue: raw ?? "")
+                ?? InputTriggerKey.migrated(fromLegacy: raw ?? "")
+                ?? .leftOption
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: inputTriggerKeyKey)

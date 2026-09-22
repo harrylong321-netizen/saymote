@@ -1154,7 +1154,7 @@ private struct KeyMappingView: View {
             VStack(alignment: .trailing, spacing: 6) {
                 pillMenu(
                     text: model.inputTriggerKey.title,
-                    width: 150,
+                    width: 176,
                     items: InputTriggerKey.allCases.map {
                         MappingMenuItem(
                             title: $0.title,
@@ -1166,14 +1166,7 @@ private struct KeyMappingView: View {
                     }
                 )
                 .disabled(model.remoteStreaming)
-                if model.inputTriggerKey == .function {
-                    Label(
-                        L10n.text("Fn 需在本机测试", "Test Fn on this Mac"),
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(ConsoleTheme.amber)
-                } else if model.remoteStreaming {
+                if model.remoteStreaming {
                     Text(L10n.text("录音结束后可修改", "Stop recording to change"))
                         .font(.system(size: 10.5))
                         .foregroundStyle(ConsoleTheme.tertiary)
