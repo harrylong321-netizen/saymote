@@ -8,7 +8,6 @@ import UniformTypeIdentifiers
 enum PermissionKind: String, Identifiable, CaseIterable {
     case doubaoInput
     case accessibility
-    case inputMonitoring
     case bluetooth
 
     var id: String { rawValue }
@@ -17,7 +16,6 @@ enum PermissionKind: String, Identifiable, CaseIterable {
         switch self {
         case .doubaoInput: L10n.text("豆包麦克风设置", "Doubao Microphone Setup")
         case .accessibility: L10n.text("辅助功能权限", "Accessibility Permission")
-        case .inputMonitoring: L10n.text("输入监控权限", "Input Monitoring Permission")
         case .bluetooth: L10n.text("蓝牙权限", "Bluetooth Permission")
         }
     }
@@ -27,7 +25,6 @@ enum PermissionKind: String, Identifiable, CaseIterable {
         switch self {
         case .doubaoInput: return nil
         case .accessibility: anchor = "Privacy_Accessibility"
-        case .inputMonitoring: anchor = "Privacy_ListenEvent"
         case .bluetooth: anchor = "Privacy_Bluetooth"
         }
         return URL(
@@ -45,7 +42,6 @@ enum PermissionKind: String, Identifiable, CaseIterable {
                 "doubaoinput2"
             ]
         case .accessibility: ["permission-accessibility", "permission-accessibility"]
-        case .inputMonitoring: ["permission-input-monitoring", "permission-input-monitoring"]
         case .bluetooth: ["permission-bluetooth", "permission-bluetooth"]
         }
     }
@@ -84,21 +80,6 @@ enum PermissionKind: String, Identifiable, CaseIterable {
                 L10n.text(
                     "找到「遥控说」并打开开关。列表中没有时，点加号选择应用。",
                     "Enable Saymote. If it is missing, use the plus button to add the app."
-                )
-            ]
-        case .inputMonitoring:
-            return [
-                L10n.text(
-                    "系统设置会打开到“隐私与安全性 → 输入监控”。",
-                    "System Settings will open Privacy & Security > Input Monitoring."
-                ),
-                L10n.text(
-                    "找到「遥控说」并打开开关。macOS 提示重新启动时允许它重新打开。",
-                    "Enable Saymote, then allow macOS to relaunch it when prompted."
-                ),
-                L10n.text(
-                    "若已授权「辅助功能」，系统会认为本项已被涵盖：列表里可能找不到「遥控说」，属正常现象，可直接跳过。",
-                    "If Accessibility is already granted, macOS treats this as covered — Saymote may not be listed, and you can skip it."
                 )
             ]
         case .bluetooth:
@@ -369,7 +350,6 @@ private final class ConsoleViewModel: ObservableObject {
     @Published var launchAtLogin = LaunchAtLogin.isEnabled
 
     var onStopMicrophone: (() -> Void)?
-    var onRestartApp: (() -> Void)?
     var onInputTriggerChanged: (() -> Void)?
     var onRemoteMappingEnabledChanged: ((SupportedRemoteID, Bool) -> Void)?
     var onLanguageChanged: ((AppLanguage) -> Void)?
@@ -480,14 +460,6 @@ private final class ConsoleViewModel: ObservableObject {
     /// 列表里根本不会出现本 App，用户找不到可以打勾的那一行（实测如此）。
     private func requestPermissionIfNeeded(_ kind: PermissionKind) {
         switch kind {
-        case .inputMonitoring:
-            // 会弹系统提示，并把 App 登记进「输入监听」列表。
-            // 用 IOHID 的请求接口，与上面的检测、以及 App 实际用的
-            // IOHIDManager 保持同一套权限语义。
-            // 两个都调：CG 的那个负责在系统里登记本 App（列表里才会出现
-            // 可勾选的那一行），IOHID 的与 App 实际的 IOHIDManager 同源。
-            _ = CGRequestListenEventAccess()
-            _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
         case .accessibility:
             // 带 prompt 的查询同样会登记进「辅助功能」列表。
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
@@ -545,7 +517,6 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
     var onPermissionGranted: (() -> Void)?
 
     var onStopMicrophone: (() -> Void)?
-    var onRestartApp: (() -> Void)?
     var onInputTriggerChanged: (() -> Void)?
     var onRemoteMappingEnabledChanged: ((SupportedRemoteID, Bool) -> Void)?
     var onLanguageChanged: ((AppLanguage) -> Void)?
@@ -581,7 +552,6 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
 
         model.onStopMicrophone = { [weak self] in self?.onStopMicrophone?() }
-        model.onRestartApp = { [weak self] in self?.onRestartApp?() }
         model.onInputTriggerChanged = { [weak self] in
             self?.onInputTriggerChanged?()
         }
@@ -774,7 +744,7 @@ private struct StudioMixerView: View {
     }
 
     private var statusText: String {
-        if !model.accessibilityGranted || !model.inputMonitoringGranted {
+        if !model.accessibilityGranted {
             return L10n.text("需要处理", "Action needed")
         }
         if model.hidConnected && model.bleConnected {
@@ -786,7 +756,7 @@ private struct StudioMixerView: View {
     private var statusColor: Color {
         // 录音中是「一切正常」的状态，统一用绿色；只有真出问题才转红。
         if model.remoteStreaming { return ConsoleTheme.green }
-        if !model.accessibilityGranted || !model.inputMonitoringGranted {
+        if !model.accessibilityGranted {
             return ConsoleTheme.red
         }
         return model.hidConnected && model.bleConnected
@@ -2110,41 +2080,6 @@ private struct MeterView: View {
 
 private enum StatusTone { case good, warning, error }
 
-private struct StatusPill: View {
-    let title: String
-    let tone: StatusTone
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Circle().fill(color).frame(width: 8, height: 8)
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(color)
-        }
-        .padding(.horizontal, 13)
-        .frame(height: 28)
-        .background(background)
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(color.opacity(0.9), lineWidth: 1))
-    }
-
-    private var color: Color {
-        switch tone {
-        case .good: ConsoleTheme.green
-        case .warning: ConsoleTheme.amber
-        case .error: ConsoleTheme.red
-        }
-    }
-
-    private var background: Color {
-        switch tone {
-        case .good: ConsoleTheme.black
-        case .warning: ConsoleTheme.amberDeep
-        case .error: ConsoleTheme.redDeep
-        }
-    }
-}
-
 /// 页面里的小节标题（「系统状态」「系统设置」）。
 private struct ConsoleSectionHeader: View {
     let title: String
@@ -2445,14 +2380,6 @@ private struct GuideScreenshot: View {
             return (0.22, 0.495, 0.32, 0.055)   // 侧栏「辅助功能」
         case (.accessibility, _):
             return (0.68, 0.330, 0.47, 0.062)   // 列表里的「遥控说」行
-        case (.inputMonitoring, 0):
-            return (0.22, 0.495, 0.32, 0.055)   // 侧栏「输入监听」
-        case (.inputMonitoring, _):
-            // 输入监听列表默认没有本 App，第二步要引导点「+」把它加进来，
-            // 所以这里框的是加号按钮，而不是某一行。
-            return (0.455, 0.670, 0.10, 0.048)
-        default:
-            return (0.68, 0.47, 0.47, 0.062)
         }
     }
 

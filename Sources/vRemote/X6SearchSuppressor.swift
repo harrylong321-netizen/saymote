@@ -10,7 +10,6 @@ final class X6SearchSuppressor {
     private var tapPort: CFMachPort?
     private var armedUntil = Date.distantPast
     private var triggerKeysDown = Set<Int64>()
-    private(set) var isAvailable = false
     var onTriggerDownObserved: ((Bool) -> Void)?
     var onTriggerUpObserved: ((Bool) -> Void)?
     // X6 can deliver the HID report roughly a second before macOS emits the
@@ -21,11 +20,9 @@ final class X6SearchSuppressor {
 
     func start() {
         guard AXIsProcessTrusted() else {
-            isAvailable = false
             print("[X6-FILTER] accessibility permission unavailable")
             return
         }
-        isAvailable = true
 
         let mask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) |
@@ -88,8 +85,7 @@ final class X6SearchSuppressor {
 
             suppressor.observeTriggerEvent(
                 type: type,
-                event: event,
-                isSynthetic: false
+                event: event
             )
             return Unmanaged.passRetained(event)
         }
@@ -139,14 +135,9 @@ final class X6SearchSuppressor {
 
     private func observeTriggerEvent(
         type: CGEventType,
-        event: CGEvent,
-        isSynthetic: Bool
+        event: CGEvent
     ) {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        // X6-generated Option events are handed to the coordinator directly
-        // before posting. Observing them again here would execute the same
-        // microphone transition twice.
-        guard !isSynthetic else { return }
         let trigger = AppStorage.inputTriggerKey
         guard trigger.keyCodes.contains(keyCode) else { return }
 
@@ -188,10 +179,10 @@ final class X6SearchSuppressor {
         )
         if isDown {
             guard triggerKeysDown.insert(keyCode).inserted else { return }
-            onTriggerDownObserved?(isSynthetic)
+            onTriggerDownObserved?(false)
         } else {
             guard triggerKeysDown.remove(keyCode) != nil else { return }
-            onTriggerUpObserved?(isSynthetic)
+            onTriggerUpObserved?(false)
         }
     }
 }

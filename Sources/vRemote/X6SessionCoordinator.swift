@@ -93,8 +93,6 @@ final class X6SessionCoordinator {
 
     /// 遥控器没有真正开麦时置位，供菜单栏显示明确提示。
     private(set) var audioWarningText: String?
-    /// 菜单栏图标旁边显示的短提示（菜单栏空间有限）。
-    private(set) var audioWarningShortText: String?
     /// 每次出现新的告警就 +1，供外部判断「这是不是一条新提示」。
     private(set) var audioWarningSerial = 0
     /// App 最近一次发出触发键点击的时间。豆包启动/停止需要时间（实测约
@@ -1038,14 +1036,6 @@ final class X6SessionCoordinator {
         return snapshot.isRecording || snapshot.hasInputDevice
     }
 
-    /// 豆包正在录音，而且用的就是我们的虚拟声卡。返回 false 表示它虽然
-    /// 在录音，但走的是别的麦克风（例如内置麦克风）。
-    private func trustedDoubaoUsesVRemote() -> Bool? {
-        guard let snapshot = trustedDoubaoSnapshot() else { return nil }
-        guard snapshot.isRecording || snapshot.hasInputDevice else { return false }
-        return snapshot.inputDeviceNames.contains(Self.vRemoteDeviceName)
-    }
-
     /// 诊断（第一步，只读不写）：记录豆包当前占用的输入设备，用来验证
     /// 「设备列表非空 = 豆包正在录音」「列表内容 = 豆包用的是哪个麦克风」
     /// 这两条推断在你这台机器上是否稳定。不参与任何决策。
@@ -1078,8 +1068,7 @@ final class X6SessionCoordinator {
     /// 让下一次按键重新回到「第一下 = 开始」。
     private func scheduleShortPressRecovery(
         expectedGeneration: UInt64,
-        text: String,
-        shortText: String
+        text: String
     ) {
         shortPressRecoveryWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -1100,7 +1089,6 @@ final class X6SessionCoordinator {
             self.finalizeClosed(reason: "short press recovery")
             // finalizeClosed 会清掉提示，这里恢复，让用户仍能看到失败原因。
             self.audioWarningText = text
-            self.audioWarningShortText = shortText
             self.publish(text)
         }
         shortPressRecoveryWork = work
@@ -1120,7 +1108,6 @@ final class X6SessionCoordinator {
 
     private func clearAudioWarning() {
         audioWarningText = nil
-        audioWarningShortText = nil
     }
 
     /// 开麦指令发出后等待音频。超时未收到音频时给出明确提示并在日志里
@@ -1145,11 +1132,7 @@ final class X6SessionCoordinator {
                             "Press too short · Remote mic stayed off (hold 0.2s)")
                 : L10n.text("遥控器未送出音频",
                             "Remote sent no audio")
-            let shortText = tooShort
-                ? L10n.text("按键太短 · 按住 0.2 秒", "Too short · hold 0.2s")
-                : L10n.text("遥控器无音频", "No remote audio")
             self.audioWarningText = text
-            self.audioWarningShortText = shortText
             self.audioWarningSerial += 1
             print(
                 String(
@@ -1165,8 +1148,7 @@ final class X6SessionCoordinator {
             if tooShort {
                 self.scheduleShortPressRecovery(
                     expectedGeneration: expectedGeneration,
-                    text: text,
-                    shortText: shortText
+                    text: text
                 )
             }
         }

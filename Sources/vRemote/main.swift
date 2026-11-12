@@ -29,7 +29,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var launchAtLoginItem: NSMenuItem!
     private var loggingToggleItem: NSMenuItem!
     private var logSizeItem: NSMenuItem!
-    private var languageItems: [AppLanguage: NSMenuItem] = [:]
 
     private var x6HIDConnected = false
     private var x6BLEConnected = false
@@ -321,8 +320,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 bypassDebounce: bypassDebounce
             ) ?? .unavailable
         }
-        x6Session.onStateChanged = { [weak self] status in
-            self?.headerLabel.title = "状态 · \(status)"
+        x6Session.onStateChanged = { [weak self] _ in
             self?.updateStatus()
         }
         x6Session.start()
@@ -431,7 +429,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.target = self
             item.state = AppLanguage.selected == language ? .on : .off
             submenu.addItem(item)
-            languageItems[language] = item
         }
         root.submenu = submenu
         return root
@@ -522,9 +519,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         debugWindow.onStopMicrophone = { [weak self] in
             self?.stopMicrophoneNow()
         }
-        debugWindow.onRestartApp = { [weak self] in
-            self?.restartAppNow()
-        }
         debugWindow.onInputTriggerChanged = { [weak self] in
             self?.x6SearchSuppressor.triggerConfigurationDidChange()
         }
@@ -598,20 +592,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         restartAppNow()
     }
 
-    @objc private func stopMicrophone() {
-        stopMicrophoneNow()
-    }
-
     private func stopMicrophoneNow() {
         x6Session.forceClose()
         x6BLE.closeMicrophone(force: true)
         chromecastBLE.closeMicrophone(force: true)
         AudioPipe.shared.setRemoteActive(false)
         updateStatus()
-    }
-
-    @objc private func restartApp() {
-        restartAppNow()
     }
 
     private var permissionRestartCount = 0

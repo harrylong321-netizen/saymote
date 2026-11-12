@@ -24,12 +24,6 @@ final class BLEBridge: NSObject {
     private let logTag: String
     private let resetSessionOnConnect: Bool
 
-    /// Where we persist a previously-discovered peripheral UUID so the next
-    /// launch can attempt `retrievePeripherals` directly without scanning.
-    private static let appSupportDirectory = NSString(
-        string: "~/Library/Application Support/vRemote"
-    ).expandingTildeInPath
-
     /// Called whenever the bridge produces or stops producing audio (true = streaming).
     var onStreamingChanged: ((Bool, Int /* sampleRate */) -> Void)?
     /// Raw ATVV session edges. Unlike `onStreamingChanged`, these preserve
@@ -83,9 +77,8 @@ final class BLEBridge: NSObject {
         resetSessionOnConnect: Bool
     ) {
         self.nameHint = nameHint
-        self.savedUUIDPath = URL(
-            fileURLWithPath: Self.appSupportDirectory
-        ).appendingPathComponent(savedUUIDFilename).path
+        self.savedUUIDPath = AppStorage.applicationSupportDirectory
+            .appendingPathComponent(savedUUIDFilename).path
         self.logTag = logTag
         self.resetSessionOnConnect = resetSessionOnConnect
         super.init()
@@ -307,7 +300,7 @@ final class BLEBridge: NSObject {
     /// streaming to keep the device's audio stream open during long
     /// voice-key holds.
     private func sendKeepAlive() {
-        guard isStreaming, let s = protocolHandler.codec else { return }
+        guard isStreaming, protocolHandler.codec != nil else { return }
         do {
             let cmd = try protocolHandler.keepAliveCommand(streamID: streamID)
             writeCommand(cmd)
@@ -315,7 +308,6 @@ final class BLEBridge: NSObject {
         } catch {
             print("[\(logTag)] keep-alive error: \(error.localizedDescription)")
         }
-        _ = s
     }
 
     /// Start a periodic timer that keeps the ATVV voice stream alive while
@@ -398,7 +390,6 @@ extension BLEBridge: CBCentralManagerDelegate {
                         rssi RSSI: NSNumber) {
         let n = peripheral.name ?? "(no name)"
         let services = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? [])
-        let hasATVV = services.contains(Self.serviceUUID)
         let short = services.map { String($0.uuidString.prefix(8)) }
         // Match the configured device name as well as the shared ATVV service;
         // multiple voice remotes can advertise the same service UUID.
@@ -406,7 +397,6 @@ extension BLEBridge: CBCentralManagerDelegate {
             print("[\(logTag)] 候选: \(n) (\(peripheral.identifier)), services=\(short), rssi=\(RSSI)")
             connect(to: peripheral)
         }
-        _ = hasATVV
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
@@ -595,31 +585,6 @@ extension BLEBridge: CBPeripheralDelegate {
             )
         case .audioStop(let reason):
             finishAudioStreamLocally(reason: reason)
-            /*
-            isStreaming = false
-            protocolHandler.endAudioStream()
-            notifyStreaming(false)
-            levelSumSq = 0
-            levelCount = 0
-            levelPeak = 0
-            onLevel?(-120, 0)
-            diagFrameCount = 0
-            stopKeepAliveTimer()
-            let streamRMS = streamSampleCount > 0
-                ? sqrt(Double(streamSumSquares) / Double(streamSampleCount))
-                : 0
-            let streamDB = streamRMS > 0
-                ? 20.0 * log10(streamRMS / 32768.0)
-                : -120
-            print(
-                "[\(logTag)] AUDIO_SUMMARY streamID=\(streamID) " +
-                "frames=\(streamFrameCount) samples=\(streamSampleCount) " +
-                "peak=\(streamPeak) rms=\(Int(streamRMS.rounded())) " +
-                "db=\(String(format: "%.1f", streamDB)) " +
-                "clipped=\(streamClippedSampleCount) syncs=\(streamAudioSyncCount)"
-            )
-            print("[\(logTag)] AUDIO_STOP reason=0x\(String(format: "%02x", reason))")
-            */
         case .audioSync(let codec, let sequence, let pred, let stepIndex):
             protocolHandler.applyAudioSync(
                 codec: codec,
@@ -640,7 +605,7 @@ extension BLEBridge: CBPeripheralDelegate {
         case .micOpenError(let code):
             print("[\(logTag)] MIC_OPEN 错误: 0x\(String(format: "%04x", code))")
             onMicrophoneOpenFailed?(code)
-        case .unknown(let d):
+        case .unknown:
             // Capabilities-handshake uses 0x0B on the control char sometimes;
             // absorb instead of failing noisily.
             if data.first == 0x0B {
@@ -659,8 +624,6 @@ extension BLEBridge: CBPeripheralDelegate {
                     }
                 }
             }
-            // Silently ignore other unknown events.
-            _ = d
         }
     }
 
@@ -709,14 +672,9 @@ extension BLEBridge: CBPeripheralDelegate {
         AudioPipe.shared.feed(samples: frame.samples)
         let needsLevel = onLevel != nil || Self.diagnosticsEnabled
         if needsLevel {
-            levelSumSq += frame.samples.reduce(into: 0) {
-                $0 += Int64($1) * Int64($1)
-            }
+            levelSumSq += frameSumSquares
             levelCount += frame.samples.count
-            levelPeak = max(
-                levelPeak,
-                frame.samples.map { Int(abs(Int($0))) }.max() ?? 0
-            )
+            levelPeak = max(levelPeak, framePeak)
         }
         if needsLevel, Date().timeIntervalSince(levelLogAt) >= 0.1 {
             let rms = levelCount > 0 ? sqrt(Double(levelSumSq) / Double(levelCount)) : 0

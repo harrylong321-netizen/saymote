@@ -16,7 +16,6 @@ final class AudioPipe: NSObject {
 
     private static let targetDeviceName = "vRemoteDr 2ch"
     private static let outputSampleRate: Double = 48_000
-    private static let outputChannels: AVAudioChannelCount = 2
 
     // X6's decoded ATVV samples are much quieter than CoreAudio microphone
     // samples. This +20 dB calibration is inherited from the proven V1 path;
@@ -30,12 +29,12 @@ final class AudioPipe: NSObject {
 
     private var pendingRemote: [Float] = []
     private var pendingRemoteIndex = 0
+    private var renderScratch = [Float](repeating: 0, count: 4096)
 
     private var scheduledRemoteBuffers = 0
     private var scheduledPeak: Float = 0
     private var renderCallbackCount = 0
     private var remoteSessionScheduledBuffers = 0
-    private var remoteSessionRenderedFrames = 0
     private var loggedFirstRemoteRender = false
     private var diagnosticsTimer: Timer?
 
@@ -85,7 +84,6 @@ final class AudioPipe: NSObject {
         clearPendingBuffersLocked()
         if active, changed {
             remoteSessionScheduledBuffers = 0
-            remoteSessionRenderedFrames = 0
             loggedFirstRemoteRender = false
         }
         stateLock.unlock()
@@ -227,8 +225,10 @@ final class AudioPipe: NSObject {
             firstChannels
         guard frameCount > 0 else { return }
 
-        var remote = [Float](repeating: 0, count: frameCount)
-        var mixed = [Float](repeating: 0, count: frameCount)
+        if renderScratch.count < frameCount {
+            renderScratch = [Float](repeating: 0, count: frameCount)
+        }
+
         var remoteTaken = 0
         var firstRemoteRenderDescription: String?
 
@@ -237,17 +237,19 @@ final class AudioPipe: NSObject {
             let remoteAvailable = pendingRemote.count - pendingRemoteIndex
             if remoteAvailable > 0 {
                 remoteTaken = min(frameCount, remoteAvailable)
-                remote.replaceSubrange(
+                renderScratch.replaceSubrange(
                     0..<remoteTaken,
                     with: pendingRemote[
                         pendingRemoteIndex..<(pendingRemoteIndex + remoteTaken)
                     ]
                 )
                 pendingRemoteIndex += remoteTaken
-                remoteSessionRenderedFrames += remoteTaken
                 if !loggedFirstRemoteRender {
                     loggedFirstRemoteRender = true
-                    let peak = remote.reduce(0) { max($0, abs($1)) }
+                    var peak: Float = 0
+                    for i in 0..<remoteTaken {
+                        peak = max(peak, abs(renderScratch[i]))
+                    }
                     firstRemoteRenderDescription = String(
                         format: "[AUDIO] X6 首次输出 frames=%d peak=%.4f",
                         remoteTaken,
@@ -265,12 +267,6 @@ final class AudioPipe: NSObject {
             print(firstRemoteRenderDescription)
         }
 
-        for frame in 0..<frameCount {
-            let hasRemote = frame < remoteTaken
-            let value: Float = hasRemote ? remote[frame] : 0
-            mixed[frame] = max(-1.0, min(1.0, value))
-        }
-
         for buffer in buffers {
             guard let data = buffer.mData else { continue }
             let channelCount = max(1, Int(buffer.mNumberChannels))
@@ -282,8 +278,11 @@ final class AudioPipe: NSObject {
             )
             let output = data.assumingMemoryBound(to: Float.self)
             for frame in 0..<writableFrames {
+                let sample: Float = frame < remoteTaken
+                    ? max(-1.0, min(1.0, renderScratch[frame]))
+                    : 0
                 for channel in 0..<channelCount {
-                    output[frame * channelCount + channel] = mixed[frame]
+                    output[frame * channelCount + channel] = sample
                 }
             }
         }

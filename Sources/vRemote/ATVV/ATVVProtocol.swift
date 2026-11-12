@@ -40,10 +40,6 @@ enum ATVVControlEvent: Equatable {
 }
 
 final class ATVVProtocol {
-    static let serviceUUID = "AB5E0001-5A21-4F05-BC7D-AF01F617B664"
-    static let txUUID = "AB5E0002-5A21-4F05-BC7D-AF01F617B664"
-    static let rxUUID = "AB5E0003-5A21-4F05-BC7D-AF01F617B664"
-    static let controlUUID = "AB5E0004-5A21-4F05-BC7D-AF01F617B664"
 
     private(set) var capabilities: ATVVCapabilities?
     private(set) var codec: ATVVCodec?
