@@ -29,7 +29,7 @@ enum AppStorage {
     static func prepare() {
         UserDefaults.standard.register(defaults: [
             loggingEnabledKey: false,
-            inputTriggerKeyKey: InputTriggerKey.leftOption.rawValue,
+            inputTriggerKeyKey: InputTriggerKey.rightOption.rawValue,
         ])
         migrateTriggerKeyIfNeeded()
         migrateLegacyStorageIfNeeded()
@@ -77,7 +77,7 @@ enum AppStorage {
             let raw = UserDefaults.standard.string(forKey: inputTriggerKeyKey)
             return InputTriggerKey(rawValue: raw ?? "")
                 ?? InputTriggerKey.migrated(fromLegacy: raw ?? "")
-                ?? .leftOption
+                ?? .rightOption
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: inputTriggerKeyKey)

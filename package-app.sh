@@ -27,6 +27,10 @@ for localization in "$SCRIPT_DIR/Packaging"/*.lproj; do
 done
 cp "$SCRIPT_DIR/Design/Saymote-Logo/saymote-app-icon-1024.png" \
   "$CONTENTS/Resources/vRemoterLogo.png"
+cp "$SCRIPT_DIR/Design/Saymote-Logo/saymote-app-icon-1024.png" \
+  "$CONTENTS/Resources/saymote-app-icon-1024.png"
+cp "$SCRIPT_DIR/Design/Saymote-Logo/saymote-logo-256.png" \
+  "$CONTENTS/Resources/saymote-logo-256.png"
 
 ICONSET="$SCRIPT_DIR/dist/vRemoter.iconset"
 rm -rf "$ICONSET"

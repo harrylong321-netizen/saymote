@@ -47,9 +47,16 @@ enum InputTriggerKey: String, CaseIterable, Identifiable {
 
     var flag: CGEventFlags {
         switch self {
-        case .leftCommand, .rightCommand: .maskCommand
-        case .leftOption, .rightOption: .maskAlternate
-        case .leftControl: .maskControl
+        case .leftCommand:
+            return CGEventFlags(rawValue: CGEventFlags.maskCommand.rawValue | 0x08)
+        case .rightCommand:
+            return CGEventFlags(rawValue: CGEventFlags.maskCommand.rawValue | 0x10)
+        case .leftOption:
+            return CGEventFlags(rawValue: CGEventFlags.maskAlternate.rawValue | 0x20)
+        case .rightOption:
+            return CGEventFlags(rawValue: CGEventFlags.maskAlternate.rawValue | 0x40)
+        case .leftControl:
+            return CGEventFlags(rawValue: CGEventFlags.maskControl.rawValue | 0x01)
         }
     }
 

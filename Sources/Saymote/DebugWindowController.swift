@@ -137,6 +137,8 @@ enum LogoAsset {
     static let image: NSImage = {
         let candidates: [URL?] = [
             Bundle.main.url(forResource: "vRemoterLogo", withExtension: "png"),
+            Bundle.main.url(forResource: "saymote-logo-256", withExtension: "png"),
+            Bundle.main.url(forResource: "saymote-app-icon-1024", withExtension: "png"),
             // 从仓库直接跑（未打包）时的回退路径。
             URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
                 .appendingPathComponent("Design/Saymote-Logo/saymote-logo-256.png"),
@@ -894,7 +896,7 @@ private struct StudioMixerView: View {
             return L10n.text("正在使用「\(wrong)」", "Using \(wrong)")
         }
         guard model.doubaoIsRecording else {
-            return L10n.text("当前未录音", "Not recording")
+            return L10n.text("待机中（录音时自动检测）", "Standby (detected while recording)")
         }
         return model.doubaoUsesVRemote
             ? L10n.text("虚拟声卡 · 录音中", "Virtual sound card · Recording")
