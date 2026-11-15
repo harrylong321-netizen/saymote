@@ -23,7 +23,7 @@ enum AppAnalytics {
                 FileHandle.standardError.write(Data(line.utf8))
             }
         }
-        config.defaultSignalPrefix = "vRemoter."
+        config.defaultSignalPrefix = "saymote."
         config.defaultParameters = {
             [
                 "language": AppLanguage.selected.rawValue,

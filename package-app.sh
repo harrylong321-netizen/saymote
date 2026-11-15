@@ -14,7 +14,8 @@ swift build -c release
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS"
 mkdir -p "$CONTENTS/Resources"
-cp "$SCRIPT_DIR/.build/release/vRemote" "$CONTENTS/MacOS/vRemote"
+cp "$SCRIPT_DIR/.build/release/Saymote" "$CONTENTS/MacOS/Saymote"
+ln -sf "Saymote" "$CONTENTS/MacOS/vRemote"
 cp "$SCRIPT_DIR/Packaging/Info.plist" "$CONTENTS/Info.plist"
 for resource_bundle in "$SCRIPT_DIR/.build/release/"*.bundle; do
   [[ -d "$resource_bundle" ]] || continue
@@ -51,7 +52,7 @@ if [[ -d "$SCRIPT_DIR/Resources/RemoteImages" ]]; then
   ditto "$SCRIPT_DIR/Resources/RemoteImages" \
     "$CONTENTS/Resources/RemoteImages"
 fi
-chmod 755 "$CONTENTS/MacOS/vRemote"
+chmod 755 "$CONTENTS/MacOS/Saymote"
 # SwiftPM resource bundles may contain read-only privacy manifests. The app
 # bundle is a disposable build artifact, so make it owner-writable before
 # clearing inherited metadata and applying the final ad-hoc signature.
@@ -66,7 +67,7 @@ codesign \
   --deep \
   --sign - \
   --timestamp=none \
-  --requirements '=designated => identifier "local.simaqingfeng.vRemote"' \
+  --requirements '=designated => identifier "io.saymote.mac"' \
   "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
 print "Built: $APP"

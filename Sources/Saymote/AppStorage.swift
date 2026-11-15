@@ -6,14 +6,24 @@ enum AppStorage {
 
     static let logsDirectory: URL = {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/vRemote", isDirectory: true)
+            .appendingPathComponent("Library/Logs/Saymote", isDirectory: true)
     }()
 
-    static let logFile = logsDirectory.appendingPathComponent("vRemote.log")
+    static let logFile = logsDirectory.appendingPathComponent("saymote.log")
 
     static let applicationSupportDirectory: URL = {
         FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Saymote", isDirectory: true)
+    }()
+
+    private static let legacyAppSupportDirectory: URL = {
+        FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/vRemote", isDirectory: true)
+    }()
+
+    private static let legacyLogsDirectory: URL = {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/vRemote", isDirectory: true)
     }()
 
     static func prepare() {
@@ -22,10 +32,28 @@ enum AppStorage {
             inputTriggerKeyKey: InputTriggerKey.leftOption.rawValue,
         ])
         migrateTriggerKeyIfNeeded()
+        migrateLegacyStorageIfNeeded()
         ensureDirectory(logsDirectory)
         ensureDirectory(applicationSupportDirectory)
 
-        // vRemote has its own storage namespace and never touches V1 data.
+        // Saymote has its own storage namespace and migrates from vRemote if present.
+    }
+
+    private static func migrateLegacyStorageIfNeeded() {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: legacyAppSupportDirectory.path) {
+            if !fm.fileExists(atPath: applicationSupportDirectory.path) {
+                try? fm.copyItem(at: legacyAppSupportDirectory, to: applicationSupportDirectory)
+            } else if let items = try? fm.contentsOfDirectory(atPath: legacyAppSupportDirectory.path) {
+                for item in items {
+                    let src = legacyAppSupportDirectory.appendingPathComponent(item)
+                    let dst = applicationSupportDirectory.appendingPathComponent(item)
+                    if !fm.fileExists(atPath: dst.path) {
+                        try? fm.copyItem(at: src, to: dst)
+                    }
+                }
+            }
+        }
     }
 
     static var loggingEnabled: Bool {

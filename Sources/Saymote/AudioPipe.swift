@@ -109,7 +109,7 @@ final class AudioPipe: NSObject {
             let stopStatus = AudioDeviceStop(deviceID, ioProcID)
             let destroyStatus = AudioDeviceDestroyIOProcID(deviceID, ioProcID)
             print(
-                "[AUDIO] vRemote IOProc 已释放: " +
+                "[AUDIO] Saymote IOProc 已释放: " +
                 "stop=\(stopStatus), destroy=\(destroyStatus)"
             )
         }
@@ -200,20 +200,20 @@ final class AudioPipe: NSObject {
             self?.render(outputData)
         }
         guard createStatus == noErr, let ioProcID else {
-            print("[AUDIO] ⚠️ 创建 vRemote IOProc 失败: OSStatus=\(createStatus)")
+            print("[AUDIO] ⚠️ 创建 Saymote IOProc 失败: OSStatus=\(createStatus)")
             return
         }
 
         let startStatus = AudioDeviceStart(deviceID, ioProcID)
         guard startStatus == noErr else {
             AudioDeviceDestroyIOProcID(deviceID, ioProcID)
-            print("[AUDIO] ⚠️ 启动 vRemote IOProc 失败: OSStatus=\(startStatus)")
+            print("[AUDIO] ⚠️ 启动 Saymote IOProc 失败: OSStatus=\(startStatus)")
             return
         }
 
         outputDeviceID = deviceID
         outputIOProcID = ioProcID
-        print("[AUDIO] vRemote IOProc 已启动: id=\(deviceID), 48000 Hz stereo")
+        print("[AUDIO] Saymote IOProc 已启动: id=\(deviceID), 48000 Hz stereo")
     }
 
     private func render(_ outputData: UnsafeMutablePointer<AudioBufferList>) {

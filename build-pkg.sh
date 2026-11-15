@@ -23,7 +23,7 @@ ditto "$SCRIPT_DIR/Driver/build/vRemoteDriver.driver" \
 pkgbuild \
   --root "$PAYLOAD_ROOT" \
   --scripts "$SCRIPT_DIR/Packaging/pkg-scripts" \
-  --identifier "local.simaqingfeng.vRemoter.pkg" \
+  --identifier "io.saymote.mac.pkg" \
   --version "$PACKAGE_VERSION" \
   "$UNSIGNED_PKG"
 

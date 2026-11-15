@@ -5,12 +5,14 @@ enum AppLanguage: String, CaseIterable {
     case simplifiedChinese = "zh-Hans"
     case english = "en"
 
-    private static let defaultsKey = "vRemoter.appLanguage"
+    private static let defaultsKey = "saymote.appLanguage"
+    private static let legacyDefaultsKey = "vRemoter.appLanguage"
 
     static var selected: AppLanguage {
         get {
-            guard let raw = UserDefaults.standard.string(forKey: defaultsKey),
-                  let language = AppLanguage(rawValue: raw) else {
+            let defaults = UserDefaults.standard
+            let raw = defaults.string(forKey: defaultsKey) ?? defaults.string(forKey: legacyDefaultsKey)
+            guard let raw, let language = AppLanguage(rawValue: raw) else {
                 return .system
             }
             return language

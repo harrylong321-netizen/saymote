@@ -51,8 +51,8 @@ enum PermissionKind: String, Identifiable, CaseIterable {
         case .doubaoInput:
             return [
                 L10n.text(
-                    "首次直接打开豆包设置时，macOS 可能询问“App 管理”；请允许 vRemote 启动豆包输入法的设置组件。",
-                    "The first direct launch may ask for App Management. Allow vRemote to open Doubao's settings component."
+                    "首次直接打开豆包设置时，macOS 可能询问“App 管理”；请允许 Saymote 启动豆包输入法的设置组件。",
+                    "The first direct launch may ask for App Management. Allow Saymote to open Doubao's settings component."
                 ),
                 L10n.text(
                     "打开菜单栏输入法菜单，点击“豆包输入法设置”。",
@@ -341,8 +341,9 @@ private final class ConsoleViewModel: ObservableObject {
     /// 记下来、一直提示到豆包重新用上虚拟声卡为止。
     @Published var doubaoWrongDeviceNotice: String?
 
-    @Published var showX6MicHint = !UserDefaults.standard.bool(
-        forKey: "vRemoter.hasCompletedX6MicTest"
+    @Published var showX6MicHint = !(
+        UserDefaults.standard.bool(forKey: "saymote.hasCompletedX6MicTest") ||
+        UserDefaults.standard.bool(forKey: "vRemoter.hasCompletedX6MicTest")
     )
     /// 「系统设置」模块里的语言与登录启动。真值来源分别是 AppLanguage 与
     /// LaunchAtLogin，这里只是镜像；refreshPermissions() 会定期校正回来。
@@ -504,7 +505,7 @@ private final class ConsoleViewModel: ObservableObject {
     func observeRemoteLevel(_ db: Double) {
         remoteLevelDB = db
         guard showX6MicHint, db > -100 else { return }
-        UserDefaults.standard.set(true, forKey: "vRemoter.hasCompletedX6MicTest")
+        UserDefaults.standard.set(true, forKey: "saymote.hasCompletedX6MicTest")
         showX6MicHint = false
     }
 
@@ -791,7 +792,8 @@ private struct StudioMixerView: View {
                 stateText: outputState.text,
                 stateColor: outputState.color,
                 db: doubaoLevelDB,
-                meterColor: ConsoleTheme.green
+                meterColor: ConsoleTheme.green,
+                onTap: { model.activeModal = .permission(.doubaoInput) }
             )
         }
     }
@@ -833,6 +835,9 @@ private struct StudioMixerView: View {
                 ? (L10n.text("录音中", "Recording"), ConsoleTheme.green)
                 : (L10n.text("豆包没读它", "Doubao is not using it"),
                    ConsoleTheme.red)
+        }
+        if model.doubaoWrongDeviceNotice != nil {
+            return (L10n.text("设备错误", "Wrong device"), ConsoleTheme.red)
         }
         return (L10n.text("等待录音", "Waiting"), ConsoleTheme.tertiary)
     }
@@ -911,8 +916,9 @@ private struct StudioMixerView: View {
                 value: doubaoInputDeviceValue,
                 tone: doubaoInputDeviceNeedsAttention ? .error : .good,
                 action: doubaoInputDeviceNeedsAttention
-                    ? L10n.text("设置方法", "Fix settings")
-                    : nil,
+                    ? L10n.text("去修复", "Fix settings")
+                    : L10n.text("设置方法", "Setup guide"),
+                actionTone: doubaoInputDeviceNeedsAttention ? .error : .neutral,
                 onAction: { model.activeModal = .permission(.doubaoInput) }
             )
             StatusRow(
@@ -1949,6 +1955,7 @@ private struct AudioStageCard: View {
     let db: Double
     let meterColor: Color
     var showTestHint = false
+    var onTap: (() -> Void)? = nil
 
     // 控制台内容宽 735，去掉两条 20 的箭头列后每块约 231，左右各 18 内边距
     // 还剩约 195：12 格 × 12pt 加间距正好 188，既不挤也不空。
@@ -1959,11 +1966,19 @@ private struct AudioStageCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(title)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(ConsoleTheme.text)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(ConsoleTheme.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer()
+                if onTap != nil {
+                    Image(systemName: "questionmark.circle")
+                        .font(.system(size: 13))
+                        .foregroundStyle(ConsoleTheme.secondary)
+                }
+            }
             Text(subtitle)
                 .font(.system(size: 12))
                 .foregroundStyle(ConsoleTheme.secondary)
@@ -2037,6 +2052,9 @@ private struct AudioStageCard: View {
         .padding(.top, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(panelBackground(ConsoleTheme.surface2, radius: 19))
+        .contentShape(RoundedRectangle(cornerRadius: 19))
+        .onTapGesture { onTap?() }
+        .help(onTap != nil ? L10n.text("点击查看豆包设置方法", "Click to view Doubao setup guide") : "")
     }
 
     private var dbText: String {
@@ -2154,6 +2172,7 @@ private struct StatusRow: View {
     let value: String
     let tone: StatusTone
     let action: String?
+    var actionTone: ConsoleButtonTone? = nil
     let onAction: () -> Void
 
     var body: some View {
@@ -2171,7 +2190,7 @@ private struct StatusRow: View {
             if let action {
                 Button(action, action: onAction)
                     .buttonStyle(ConsoleButtonStyle(
-                        tone: tone,
+                        tone: actionTone ?? ConsoleButtonTone(statusTone: tone),
                         compact: true,
                         consoleSized: true
                     ))
@@ -2418,7 +2437,17 @@ private struct GuideScreenshot: View {
 
 }
 
-private enum ConsoleButtonTone { case neutral, good, warning, error }
+private enum ConsoleButtonTone {
+    case neutral, good, warning, error
+
+    init(statusTone: StatusTone) {
+        switch statusTone {
+        case .good: self = .good
+        case .warning: self = .warning
+        case .error: self = .error
+        }
+    }
+}
 
 private struct ConsoleButtonStyle: ButtonStyle {
     let tone: ConsoleButtonTone

@@ -90,7 +90,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 已被涵盖，既不提示也不再登记（这也是它一直显示「已授权」的由来）。
     private func requestInputMonitoringOnce() {
         // 按「版本」记一次：换版本再问一次，用户拒绝后也不会每次启动都弹。
-        let key = "vRemoter.listenEventRequestedVersion"
+        let key = "saymote.listenEventRequestedVersion"
         let version = Bundle.main.object(
             forInfoDictionaryKey: "CFBundleShortVersionString"
         ) as? String ?? "?"

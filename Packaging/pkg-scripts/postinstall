@@ -8,13 +8,17 @@ set -u
 
 /usr/bin/killall -9 coreaudiod 2>/dev/null || true
 /usr/bin/pkill -TERM -x vRemote 2>/dev/null || true
+/usr/bin/pkill -TERM -x Saymote 2>/dev/null || true
 # 等旧进程真的退出再往下走：下面用 `open -n` 强制开新实例，如果这个还活着，
 # 就会同时存在两个实例（实测出现过，两个进程抢蓝牙和虚拟声卡）。
 for _ in {1..25}; do
-  /usr/bin/pgrep -x vRemote >/dev/null 2>&1 || break
+  if ! /usr/bin/pgrep -x vRemote >/dev/null 2>&1 && ! /usr/bin/pgrep -x Saymote >/dev/null 2>&1; then
+    break
+  fi
   /bin/sleep 0.2
 done
 /usr/bin/pkill -KILL -x vRemote 2>/dev/null || true
+/usr/bin/pkill -KILL -x Saymote 2>/dev/null || true
 
 # 早期版本装在 /Applications/vRemote.app。改名后必须清掉旧的那份，
 # 否则系统里会同时存在两条应用记录（权限列表里也会看到旧名字）。
@@ -23,15 +27,12 @@ done
 console_user=$(/usr/bin/stat -f '%Su' /dev/console)
 if [[ -n "$console_user" && "$console_user" != "root" ]]; then
   console_uid=$(/usr/bin/id -u "$console_user")
-  # 登录项里如果还指着旧路径，改写指向；App 自己也会按新路径重登记。
-  agent="/Users/$console_user/Library/LaunchAgents/local.simaqingfeng.vRemote.login.plist"
-  if [[ -f "$agent" ]]; then
-    /usr/bin/plutil -replace 'ProgramArguments.1' \
-      -string "/Applications/遥控说.app" "$agent" 2>/dev/null || true
+  # 清理旧的 vRemote 登录项
+  legacy_agent="/Users/$console_user/Library/LaunchAgents/local.simaqingfeng.vRemote.login.plist"
+  if [[ -f "$legacy_agent" ]]; then
     /bin/launchctl asuser "$console_uid" \
-      /bin/launchctl bootout "gui/$console_uid" "$agent" 2>/dev/null || true
-    /bin/launchctl asuser "$console_uid" \
-      /bin/launchctl bootstrap "gui/$console_uid" "$agent" 2>/dev/null || true
+      /bin/launchctl bootout "gui/$console_uid" "$legacy_agent" 2>/dev/null || true
+    /bin/rm -f "$legacy_agent" 2>/dev/null || true
   fi
   /bin/launchctl asuser "$console_uid" \
     /usr/bin/sudo -u "$console_user" \

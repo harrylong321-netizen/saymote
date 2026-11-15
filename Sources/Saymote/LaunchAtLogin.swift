@@ -2,18 +2,26 @@ import Foundation
 import Darwin
 
 enum LaunchAtLogin {
-    private static let label = "local.simaqingfeng.vRemote.login"
+    private static let label = "io.saymote.mac.login"
+    private static let legacyLabel = "local.simaqingfeng.vRemote.login"
 
     private static var agentURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/LaunchAgents/\(label).plist")
     }
 
+    private static var legacyAgentURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/\(legacyLabel).plist")
+    }
+
     static var isEnabled: Bool {
-        FileManager.default.fileExists(atPath: agentURL.path)
+        cleanLegacyAgentIfNeeded()
+        return FileManager.default.fileExists(atPath: agentURL.path)
     }
 
     static func setEnabled(_ enabled: Bool) throws {
+        cleanLegacyAgentIfNeeded()
         if enabled {
             try install()
         } else {
@@ -21,11 +29,18 @@ enum LaunchAtLogin {
         }
     }
 
+    private static func cleanLegacyAgentIfNeeded() {
+        guard FileManager.default.fileExists(atPath: legacyAgentURL.path) else { return }
+        _ = runLaunchctl(["bootout", domainTarget, legacyAgentURL.path])
+        try? FileManager.default.removeItem(at: legacyAgentURL)
+    }
+
     private static func install() throws {
+        cleanLegacyAgentIfNeeded()
         let bundlePath = Bundle.main.bundlePath
         guard bundlePath.hasSuffix(".app") else {
             throw NSError(
-                domain: "vRemote.LaunchAtLogin",
+                domain: "Saymote.LaunchAtLogin",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "无法取得应用路径"]
             )
@@ -55,7 +70,7 @@ enum LaunchAtLogin {
         if result != 0 {
             try? FileManager.default.removeItem(at: agentURL)
             throw NSError(
-                domain: "vRemote.LaunchAtLogin",
+                domain: "Saymote.LaunchAtLogin",
                 code: Int(result),
                 userInfo: [NSLocalizedDescriptionKey: "无法注册登录启动项"]
             )

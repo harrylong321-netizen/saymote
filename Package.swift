@@ -2,18 +2,18 @@
 import PackageDescription
 
 let package = Package(
-    name: "vRemote",
+    name: "Saymote",
     platforms: [.macOS(.v12)],
     dependencies: [
         .package(name: "TelemetryDeck", path: "../SwiftSDK-local")
     ],
     targets: [
         .executableTarget(
-            name: "vRemote",
+            name: "Saymote",
             dependencies: [
                 .product(name: "TelemetryDeck", package: "TelemetryDeck")
             ],
-            path: "Sources/vRemote",
+            path: "Sources/Saymote",
             swiftSettings: [
                 .define("DEBUG", .when(configuration: .debug))
             ]

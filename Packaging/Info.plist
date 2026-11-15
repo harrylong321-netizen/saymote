@@ -7,9 +7,9 @@
     <key>CFBundleDisplayName</key>
     <string>遥控说</string>
     <key>CFBundleExecutable</key>
-    <string>vRemote</string>
+    <string>Saymote</string>
     <key>CFBundleIdentifier</key>
-    <string>local.simaqingfeng.vRemote</string>
+    <string>io.saymote.mac</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
