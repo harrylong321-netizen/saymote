@@ -1,0 +1,45 @@
+#!/bin/zsh
+set -u
+
+/usr/sbin/chown -R root:wheel "/Library/Audio/Plug-Ins/HAL/vRemoteDriver.driver"
+/usr/bin/find "/Library/Audio/Plug-Ins/HAL/vRemoteDriver.driver" -type d -exec /bin/chmod 755 {} \;
+/usr/bin/find "/Library/Audio/Plug-Ins/HAL/vRemoteDriver.driver" -type f -exec /bin/chmod 644 {} \;
+/bin/chmod 755 "/Library/Audio/Plug-Ins/HAL/vRemoteDriver.driver/Contents/MacOS/BlackHole"
+
+/usr/bin/killall -9 coreaudiod 2>/dev/null || true
+/usr/bin/pkill -TERM -x vRemote 2>/dev/null || true
+/usr/bin/pkill -TERM -x Saymote 2>/dev/null || true
+# 等旧进程真的退出再往下走：下面用 `open -n` 强制开新实例，如果这个还活着，
+# 就会同时存在两个实例（实测出现过，两个进程抢蓝牙和虚拟声卡）。
+for _ in {1..25}; do
+  if ! /usr/bin/pgrep -x vRemote >/dev/null 2>&1 && ! /usr/bin/pgrep -x Saymote >/dev/null 2>&1; then
+    break
+  fi
+  /bin/sleep 0.2
+done
+/usr/bin/pkill -KILL -x vRemote 2>/dev/null || true
+/usr/bin/pkill -KILL -x Saymote 2>/dev/null || true
+
+console_user=$(/usr/bin/stat -f '%Su' /dev/console)
+# 早期版本装在 /Applications/vRemote.app。改名后必须清掉旧的那份，
+# 否则系统里会同时存在两条应用记录（权限列表里也会看到旧名字）。
+/bin/rm -rf "/Applications/vRemote.app"
+if [[ -n "$console_user" && "$console_user" != "root" ]]; then
+  /bin/rm -rf "/Users/$console_user/.Trash/遥控说.app" 2>/dev/null || true
+  /bin/rm -rf "/Users/$console_user/.Trash/vRemote.app" 2>/dev/null || true
+fi
+if [[ -n "$console_user" && "$console_user" != "root" ]]; then
+  console_uid=$(/usr/bin/id -u "$console_user")
+  # 清理旧的 vRemote 登录项
+  legacy_agent="/Users/$console_user/Library/LaunchAgents/local.simaqingfeng.vRemote.login.plist"
+  if [[ -f "$legacy_agent" ]]; then
+    /bin/launchctl asuser "$console_uid" \
+      /bin/launchctl bootout "gui/$console_uid" "$legacy_agent" 2>/dev/null || true
+    /bin/rm -f "$legacy_agent" 2>/dev/null || true
+  fi
+  /bin/launchctl asuser "$console_uid" \
+    /usr/bin/sudo -u "$console_user" \
+    /usr/bin/open -n "/Applications/遥控说.app" >/dev/null 2>&1 || true
+fi
+
+exit 0
